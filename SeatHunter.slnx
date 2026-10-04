@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SeatHunter.Api/SeatHunter.Api.csproj" />
+    <Project Path="src/SeatHunter.Application/SeatHunter.Application.csproj" />
+    <Project Path="src/SeatHunter.Domain/SeatHunter.Domain.csproj" />
+    <Project Path="src/SeatHunter.Infrastructure/SeatHunter.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SeatHunter.Application.Tests/SeatHunter.Application.Tests.csproj" />
+  </Folder>
+</Solution>

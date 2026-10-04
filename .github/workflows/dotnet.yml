@@ -1,0 +1,23 @@
+name: SeatHunter CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: '8.0.x'
+    - name: Restore dependencies
+      run: dotnet restore SeatHunter.sln
+    - name: Build
+      run: dotnet build SeatHunter.sln --no-restore --configuration Release
+    - name: Test
+      run: dotnet test SeatHunter.sln --no-build --verbosity normal --configuration Release
