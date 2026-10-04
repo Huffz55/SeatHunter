@@ -14,10 +14,10 @@ jobs:
     - name: Setup .NET
       uses: actions/setup-dotnet@v3
       with:
-        dotnet-version: '8.0.x'
+        dotnet-version: '10.0.x'
     - name: Restore dependencies
-      run: dotnet restore SeatHunter.sln
+      run: dotnet restore SeatHunter.slnx
     - name: Build
-      run: dotnet build SeatHunter.sln --no-restore --configuration Release
+      run: dotnet build SeatHunter.slnx --no-restore --configuration Release
     - name: Test
-      run: dotnet test SeatHunter.sln --no-build --verbosity normal --configuration Release
+      run: dotnet test SeatHunter.slnx --no-build --verbosity normal --configuration Release
