@@ -3,6 +3,7 @@ using Moq;
 using SeatHunter.Application.Features.HuntRequests.Commands.CreateHuntRequest;
 using SeatHunter.Application.Interfaces;
 using SeatHunter.Domain.Entities;
+using SeatHunter.Domain.Interfaces;
 
 namespace SeatHunter.Application.Tests.Features.HuntRequests;
 
@@ -11,12 +12,27 @@ public class CreateHuntRequestCommandHandlerTests
     [Fact]
     public async Task Handle_Should_SaveToDatabase_And_PublishMessage()
     {
-        // Arrange (Hazırlık): Veritabanı ve RabbitMQ bağımlılıklarını taklit ediyoruz (Mock)
+        // Arrange (Hazırlık): Veritabanı, RabbitMQ ve Factory bağımlılıklarını taklit ediyoruz (Mock)
         var mockRepo = new Mock<IHuntRequestRepository>();
         var mockPublisher = new Mock<IMessagePublisher>();
+        var mockFactory = new Mock<ITicketProviderFactory>();
+        var mockProvider = new Mock<ITicketProvider>();
+
+        // Sahte provider ayarları
+        mockProvider.Setup(p => p.ProviderName).Returns("MockProvider");
+        mockProvider.Setup(p => p.ExtractEventNameAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("Mock Event Name");
+
+        mockFactory.Setup(f => f.GetProvider(It.IsAny<string>())).Returns(mockProvider.Object);
         
-        var handler = new CreateHuntRequestCommandHandler(mockRepo.Object, mockPublisher.Object);
-        var command = new CreateHuntRequestCommand("user123", "Obilet", "IST-ANK", DateTime.UtcNow);
+        var handler = new CreateHuntRequestCommandHandler(mockRepo.Object, mockPublisher.Object, mockFactory.Object);
+        var command = new CreateHuntRequestCommand(
+            UserId: "user123", 
+            Url: "https://biletix.com/mock-event", 
+            TargetDate: DateTime.UtcNow, 
+            Language: "tr", 
+            TargetEventName: "Tarkan Konseri"
+        );
 
         // Act (Eylem): Handler'ı çalıştırıyoruz
         var result = await handler.Handle(command, CancellationToken.None);
