@@ -6,5 +6,8 @@ public record CreateHuntRequestCommand(
     string UserId, 
     string Url, 
     DateTime TargetDate,
-    string Language,
-    string? TargetEventName) : IRequest<Guid>;
+    string Language = "tr",
+    string? TargetEventName = null,
+    decimal? MaxPrice = null,
+    string? PreferredCategory = null,
+    bool AutoReserveEnabled = false) : IRequest<Guid>;

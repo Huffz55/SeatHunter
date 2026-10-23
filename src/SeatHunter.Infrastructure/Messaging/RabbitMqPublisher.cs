@@ -3,23 +3,20 @@ using System.Text.Json;
 using RabbitMQ.Client;
 using SeatHunter.Application.Interfaces;
 
-using Microsoft.Extensions.Configuration;
-
 namespace SeatHunter.Infrastructure.Messaging;
 
 public class RabbitMqPublisher : IMessagePublisher
 {
-    private readonly string _hostName;
+    private readonly IRabbitMqConnectionManager _connectionManager;
 
-    public RabbitMqPublisher(IConfiguration configuration)
+    public RabbitMqPublisher(IRabbitMqConnectionManager connectionManager)
     {
-        _hostName = configuration.GetConnectionString("RabbitMQ") ?? "localhost";
+        _connectionManager = connectionManager;
     }
 
     public void Publish<T>(T message, string queueName)
     {
-        var factory = new ConnectionFactory { HostName = _hostName };
-        using var connection = factory.CreateConnection();
+        var connection = _connectionManager.GetConnection();
         using var channel = connection.CreateModel();
 
         channel.QueueDeclare(queue: queueName,

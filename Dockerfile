@@ -15,12 +15,15 @@ COPY . .
 WORKDIR "/src/src/SeatHunter.Api"
 RUN dotnet publish "SeatHunter.Api.csproj" -c Release -r linux-x64 --self-contained true -o /app/publish /p:UseAppHost=true
 
-# 2. Çalışma Zamanı (Runtime) aşaması: Microsoft Playwright dotnet imajını kullan (içinde Headless Chromium var)
-FROM mcr.microsoft.com/playwright/dotnet:v1.40.0-jammy AS final
+# 2. Çalışma Zamanı (Runtime) aşaması: Microsoft Playwright dotnet imajını kullan (Playwright v1.63.0 ile tam uyumlu)
+FROM mcr.microsoft.com/playwright/dotnet:v1.63.0-noble AS final
 WORKDIR /app
 
 # Yayınlanan self-contained binary dosyalarını ve web kök klasörünü (wwwroot) kopyala
 COPY --from=build /app/publish .
+
+# İkili çalıştırma izinlerini güvenceye al
+RUN chmod +x ./SeatHunter.Api
 
 # Portları dışa aç
 EXPOSE 8080

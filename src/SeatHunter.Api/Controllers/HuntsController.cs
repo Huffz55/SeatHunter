@@ -1,85 +1,64 @@
+using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using SeatHunter.Application.Interfaces;
+using SeatHunter.Application.Features.HuntRequests.Commands.CancelHuntRequest;
+using SeatHunter.Application.Features.HuntRequests.Queries.GetHuntHistory;
+using SeatHunter.Application.Features.HuntRequests.Queries.GetRecentHunts;
+using SeatHunter.Domain.Constants;
+using System.Security.Claims;
 
 namespace SeatHunter.Api.Controllers;
 
 [ApiController]
 [Authorize]
+[Microsoft.AspNetCore.RateLimiting.EnableRateLimiting(AppConstants.RateLimiting.FixedPolicy)]
 [Route("api/[controller]")]
 public class HuntsController : ControllerBase
 {
-    private readonly IHuntManagerService _huntManager;
+    private readonly IMediator _mediator;
 
-    public HuntsController(IHuntManagerService huntManager)
+    public HuntsController(IMediator mediator)
     {
-        _huntManager = huntManager;
+        _mediator = mediator;
     }
 
     [HttpPost("cancel/{id}")]
-    public async Task<IActionResult> Cancel(string id, [FromServices] SeatHunter.Infrastructure.Persistence.SeatHunterDbContext dbContext)
+    public async Task<IActionResult> Cancel(string id)
     {
-        _huntManager.CancelHunt(id);
-        
-        if (Guid.TryParse(id, out var guid))
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userId)) return Unauthorized();
+
+        if (!Guid.TryParse(id, out var guid))
         {
-            var hunt = await dbContext.HuntRequests.FindAsync(guid);
-            if (hunt != null && hunt.Status == SeatHunter.Domain.Enums.RequestStatus.Active)
-            {
-                hunt.Status = SeatHunter.Domain.Enums.RequestStatus.Cancelled;
-                await dbContext.SaveChangesAsync();
-            }
+            return BadRequest(new { Message = "Geçersiz Hunt ID formatı." });
         }
-        
+
+        var success = await _mediator.Send(new CancelHuntRequestCommand(guid, userId));
+        if (!success)
+        {
+            return NotFound(new { Message = "Tarama isteği bulunamadı veya bu işlem için yetkiniz yok." });
+        }
+
         return Ok(new { Message = "Tarama başarıyla iptal edildi.", HuntId = id });
     }
 
     [HttpGet("active")]
-    public async Task<IActionResult> GetActive([FromServices] SeatHunter.Infrastructure.Persistence.SeatHunterDbContext dbContext)
+    public async Task<IActionResult> GetActive()
     {
-        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        
-        var allHunts = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync(
-            System.Linq.Queryable.OrderByDescending(System.Linq.Queryable.Where(dbContext.HuntRequests, r => r.UserId == userId), r => r.CreatedAt).Take(100)
-        );
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userId)) return Unauthorized();
 
-        var result = System.Linq.Enumerable.Select(allHunts, r => new SeatHunter.Application.DTOs.ActiveHuntDto
-        {
-            Id = r.Id.ToString(),
-            Provider = r.ProviderName,
-            EventId = r.RouteOrEventId,
-            EventName = r.EventName,
-            Status = r.Status.ToString() == "Completed" ? "Found" : r.Status.ToString(),
-            StartTime = r.CreatedAt.ToLocalTime().ToString("HH:mm")
-        });
-
+        var result = await _mediator.Send(new GetRecentHuntsQuery(userId));
         return Ok(result);
     }
 
     [HttpGet("history")]
-    public async Task<IActionResult> GetHistory([FromServices] SeatHunter.Infrastructure.Persistence.SeatHunterDbContext dbContext)
+    public async Task<IActionResult> GetHistory()
     {
-        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(userId)) return Unauthorized();
 
-        // 1 = Completed (Found), 2 = Cancelled
-        var history = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync(
-            System.Linq.Queryable.OrderByDescending(
-                System.Linq.Queryable.Where(dbContext.HuntRequests, r => r.UserId == userId && (r.Status == SeatHunter.Domain.Enums.RequestStatus.Completed || r.Status == SeatHunter.Domain.Enums.RequestStatus.Cancelled)), 
-                r => r.CreatedAt
-            ).Take(100)
-        );
-
-        var result = System.Linq.Enumerable.Select(history, r => new
-        {
-            Id = r.Id.ToString(),
-            Provider = r.ProviderName,
-            EventId = r.RouteOrEventId,
-            EventName = r.EventName,
-            Status = r.Status == SeatHunter.Domain.Enums.RequestStatus.Completed ? "Found" : "Cancelled",
-            Date = r.CreatedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm")
-        });
-
+        var result = await _mediator.Send(new GetHuntHistoryQuery(userId));
         return Ok(result);
     }
 }

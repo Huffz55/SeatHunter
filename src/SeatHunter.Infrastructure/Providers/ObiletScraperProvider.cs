@@ -1,11 +1,13 @@
 using HtmlAgilityPack;
 using SeatHunter.Domain.Interfaces;
+using SeatHunter.Domain.Constants;
+using SeatHunter.Infrastructure.Providers.Headers;
 
 namespace SeatHunter.Infrastructure.Providers;
 
 public class ObiletScraperProvider : ITicketProvider
 {
-    public string ProviderName => "ObiletLive";
+    public string ProviderName => AppConstants.Providers.ObiletLive;
     private readonly HttpClient _httpClient;
 
     public ObiletScraperProvider(HttpClient httpClient)
@@ -17,7 +19,10 @@ public class ObiletScraperProvider : ITicketProvider
     {
         try
         {
-            var response = await _httpClient.GetAsync(url, cancellationToken);
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            ScraperHeaderGenerator.ApplyBrowserHeaders(request);
+
+            var response = await _httpClient.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode) return false;
 
             var html = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -44,7 +49,10 @@ public class ObiletScraperProvider : ITicketProvider
     {
         try
         {
-            var response = await _httpClient.GetAsync(url, cancellationToken);
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            ScraperHeaderGenerator.ApplyBrowserHeaders(request);
+
+            var response = await _httpClient.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode) return string.Empty;
             var html = await response.Content.ReadAsStringAsync(cancellationToken);
             var doc = new HtmlDocument();

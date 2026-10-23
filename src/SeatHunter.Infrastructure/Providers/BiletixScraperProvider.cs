@@ -1,11 +1,12 @@
 using HtmlAgilityPack;
 using SeatHunter.Domain.Interfaces;
+using SeatHunter.Domain.Constants;
 
 namespace SeatHunter.Infrastructure.Providers;
 
 public class BiletixScraperProvider : ITicketProvider
 {
-    public string ProviderName => "BiletixLive";
+    public string ProviderName => AppConstants.Providers.BiletixLive;
     private readonly HttpClient _httpClient;
 
     public BiletixScraperProvider(HttpClient httpClient)
@@ -18,16 +19,7 @@ public class BiletixScraperProvider : ITicketProvider
         try
         {
             var request = new HttpRequestMessage(HttpMethod.Get, url);
-            // Bot korumalarını aşmak için sahte header'lar ekliyoruz
-            request.Headers.Add("Sec-Fetch-Dest", "document");
-            request.Headers.Add("Sec-Fetch-Mode", "navigate");
-            request.Headers.Add("Sec-Fetch-Site", "none");
-            request.Headers.Add("Sec-Fetch-User", "?1");
-            request.Headers.Add("Upgrade-Insecure-Requests", "1");
-            request.Headers.Add("Cache-Control", "max-age=0");
-            request.Headers.Add("Sec-Ch-Ua", "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"");
-            request.Headers.Add("Sec-Ch-Ua-Mobile", "?0");
-            request.Headers.Add("Sec-Ch-Ua-Platform", "\"Windows\"");
+            Headers.ScraperHeaderGenerator.ApplyBrowserHeaders(request);
 
             var response = await _httpClient.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode) return false;
@@ -67,15 +59,7 @@ public class BiletixScraperProvider : ITicketProvider
         try
         {
             var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Add("Sec-Fetch-Dest", "document");
-            request.Headers.Add("Sec-Fetch-Mode", "navigate");
-            request.Headers.Add("Sec-Fetch-Site", "none");
-            request.Headers.Add("Sec-Fetch-User", "?1");
-            request.Headers.Add("Upgrade-Insecure-Requests", "1");
-            request.Headers.Add("Cache-Control", "max-age=0");
-            request.Headers.Add("Sec-Ch-Ua", "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"");
-            request.Headers.Add("Sec-Ch-Ua-Mobile", "?0");
-            request.Headers.Add("Sec-Ch-Ua-Platform", "\"Windows\"");
+            Headers.ScraperHeaderGenerator.ApplyBrowserHeaders(request);
 
             var response = await _httpClient.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode) return string.Empty;

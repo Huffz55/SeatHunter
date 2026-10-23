@@ -11,8 +11,8 @@ public class HuntManagerService : IHuntManagerService
 {
     private class ActiveHuntEntry
     {
-        public ActiveHuntDto Dto { get; set; }
-        public CancellationTokenSource Cts { get; set; }
+        public ActiveHuntDto Dto { get; set; } = null!;
+        public CancellationTokenSource Cts { get; set; } = null!;
     }
 
     private readonly ConcurrentDictionary<string, ActiveHuntEntry> _activeHunts = new();

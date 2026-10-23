@@ -5,6 +5,7 @@ using SeatHunter.Application;
 using SeatHunter.Infrastructure;
 using SeatHunter.Api.BackgroundServices;
 using Microsoft.EntityFrameworkCore;
+using SeatHunter.Domain.Constants;
 
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
@@ -40,14 +41,40 @@ try
                 ValidAudience = jwtSettings["Audience"],
                 IssuerSigningKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(jwtSettings["Key"]!))
             };
+
+            options.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
+            {
+                OnMessageReceived = context =>
+                {
+                    var accessToken = context.Request.Query["access_token"];
+                    var path = context.HttpContext.Request.Path;
+                    if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/notificationHub"))
+                    {
+                        context.Token = accessToken;
+                    }
+                    return Task.CompletedTask;
+                }
+            };
         });
 
+    builder.Services.AddCors(options =>
+    {
+        options.AddPolicy("CorsPolicy", policy =>
+        {
+            policy.SetIsOriginAllowed(_ => true)
+                  .AllowAnyMethod()
+                  .AllowAnyHeader()
+                  .AllowCredentials();
+        });
+    });
+
     builder.Services.AddSignalR();
+    builder.Services.AddScoped<SeatHunter.Application.Interfaces.ISignalRNotifier, SeatHunter.Api.Services.SignalRNotifier>();
 
     builder.Services.AddRateLimiter(options =>
     {
         options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-        options.AddFixedWindowLimiter("FixedPolicy", opt =>
+        options.AddFixedWindowLimiter(AppConstants.RateLimiting.FixedPolicy, opt =>
         {
             opt.PermitLimit = 3;
             opt.Window = TimeSpan.FromSeconds(10);
@@ -56,10 +83,19 @@ try
         });
     });
 
+    var redisConn = builder.Configuration.GetConnectionString("Redis");
+    if (string.IsNullOrWhiteSpace(redisConn)) redisConn = "localhost:6379";
+
+    var rabbitHost = builder.Configuration.GetConnectionString("RabbitMQ");
+    if (string.IsNullOrWhiteSpace(rabbitHost)) rabbitHost = "localhost";
+    var rabbitConn = rabbitHost.StartsWith("amqp://") ? rabbitHost : $"amqp://{rabbitHost}:5672";
+
     builder.Services.AddHealthChecks()
         .AddNpgSql(builder.Configuration.GetConnectionString("DefaultConnection")!, name: "PostgreSQL-Database")
-        .AddRedis("localhost:6379", name: "Redis-Cache")
-        .AddRabbitMQ(rabbitConnectionString: "amqp://localhost:5672", name: "RabbitMQ-MessageBroker");
+        .AddRedis(redisConn, name: "Redis-Cache")
+        .AddRabbitMQ(rabbitConnectionString: rabbitConn, name: "RabbitMQ-MessageBroker")
+        .AddCheck<SeatHunter.Infrastructure.HealthChecks.ProxyPoolHealthCheck>("Proxy-Pool");
+
     builder.Services.AddHostedService<RabbitMqListenerService>();
     builder.Services.AddHostedService<ContinuousHuntWorker>();
 
@@ -79,6 +115,7 @@ try
         app.UseSwaggerUI(); 
     }
     app.UseHttpsRedirection();
+    app.UseCors("CorsPolicy");
     app.UseAuthentication();
     app.UseAuthorization();
     app.UseRateLimiter();

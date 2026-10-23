@@ -29,4 +29,36 @@ public class HuntRequestRepository : IHuntRequestRepository
         _context.HuntRequests.Update(huntRequest);
         await _context.SaveChangesAsync(cancellationToken);
     }
+
+    public async Task<List<HuntRequest>> GetActiveByUserIdAsync(string userId, CancellationToken cancellationToken)
+    {
+        return await _context.HuntRequests
+            .Where(x => x.UserId == userId && x.Status == Domain.Enums.RequestStatus.Active)
+            .OrderByDescending(x => x.CreatedAt)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<int> GetActiveCountByUserIdAsync(string userId, CancellationToken cancellationToken = default)
+    {
+        return await _context.HuntRequests
+            .CountAsync(x => x.UserId == userId && x.Status == Domain.Enums.RequestStatus.Active, cancellationToken);
+    }
+
+    public async Task<List<HuntRequest>> GetRecentByUserIdAsync(string userId, int count, CancellationToken cancellationToken)
+    {
+        return await _context.HuntRequests
+            .Where(x => x.UserId == userId)
+            .OrderByDescending(x => x.CreatedAt)
+            .Take(count)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<List<HuntRequest>> GetHistoryByUserIdAsync(string userId, int count, CancellationToken cancellationToken)
+    {
+        return await _context.HuntRequests
+            .Where(x => x.UserId == userId && (x.Status == Domain.Enums.RequestStatus.Completed || x.Status == Domain.Enums.RequestStatus.Cancelled || x.Status == Domain.Enums.RequestStatus.Expired))
+            .OrderByDescending(x => x.CreatedAt)
+            .Take(count)
+            .ToListAsync(cancellationToken);
+    }
 }

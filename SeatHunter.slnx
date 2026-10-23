@@ -7,5 +7,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/SeatHunter.Application.Tests/SeatHunter.Application.Tests.csproj" />
+    <Project Path="tests/SeatHunter.Infrastructure.Tests/SeatHunter.Infrastructure.Tests.csproj" />
   </Folder>
 </Solution>

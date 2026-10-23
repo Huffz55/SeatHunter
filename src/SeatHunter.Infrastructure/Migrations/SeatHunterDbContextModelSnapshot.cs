@@ -28,6 +28,9 @@ namespace SeatHunter.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<bool>("AutoReserveEnabled")
+                        .HasColumnType("boolean");
+
                     b.Property<DateTime?>("CompletedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -41,12 +44,24 @@ namespace SeatHunter.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<decimal?>("MaxPrice")
+                        .HasColumnType("numeric");
+
                     b.Property<DateTime>("NextScanTime")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PreferredCategory")
+                        .HasColumnType("text");
 
                     b.Property<string>("ProviderName")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<string>("ReservationCartUrl")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("ReservedUntil")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("RouteOrEventId")
                         .IsRequired()
@@ -63,6 +78,12 @@ namespace SeatHunter.Infrastructure.Migrations
                         .HasColumnType("text");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("UserId")
+                        .HasDatabaseName("IX_HuntRequests_UserId");
+
+                    b.HasIndex("Status", "NextScanTime")
+                        .HasDatabaseName("IX_HuntRequests_Status_NextScanTime");
 
                     b.ToTable("HuntRequests");
                 });
@@ -147,7 +168,16 @@ namespace SeatHunter.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<int>("Tier")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
                     b.HasKey("Id");
+
+                    b.HasIndex("Email")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Users_Email");
 
                     b.ToTable("Users");
                 });

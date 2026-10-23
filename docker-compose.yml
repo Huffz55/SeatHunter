@@ -5,9 +5,9 @@ services:
     image: postgres:15-alpine
     container_name: seathunter_postgres
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-SeatHunterDb}
     ports:
       - "5432:5432"
     volumes:
@@ -15,6 +15,11 @@ services:
     networks:
       - seathunter_network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-SeatHunterDb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
@@ -26,6 +31,11 @@ services:
     networks:
       - seathunter_network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
@@ -36,6 +46,11 @@ services:
     networks:
       - seathunter_network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   seathunter_api:
     build:
@@ -43,23 +58,37 @@ services:
       dockerfile: Dockerfile
     container_name: seathunter_api
     depends_on:
-      - postgres
-      - redis
-      - rabbitmq
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     ports:
       - "5179:8080"
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=${POSTGRES_DB:-SeatHunterDb};Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres}
       - ConnectionStrings__Redis=redis:6379
       - ConnectionStrings__RabbitMQ=rabbitmq
       - Telegram__BotToken=${TELEGRAM_BOT_TOKEN}
+      - Telegram__ChatId=${TELEGRAM_CHAT_ID:-2051304885}
       - Jwt__Key=${JWT_KEY}
       - Email__From=${EMAIL_FROM}
       - Email__Password=${EMAIL_PASSWORD}
+      - Email__SmtpServer=${EMAIL_SMTP_SERVER:-smtp.gmail.com}
+      - Email__SmtpPort=${EMAIL_SMTP_PORT:-587}
+      - Discord__WebhookUrl=${DISCORD_WEBHOOK_URL}
+      - SCRAPER_PROXIES=${SCRAPER_PROXIES}
     networks:
       - seathunter_network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
 volumes:
   postgres_data:

@@ -1,27 +1,48 @@
 using Microsoft.Playwright;
 using System.Text.RegularExpressions;
 using HtmlAgilityPack;
+using Microsoft.Extensions.Logging;
+using SeatHunter.Application.Interfaces;
 using SeatHunter.Domain.Interfaces;
+using SeatHunter.Domain.Constants;
+using SeatHunter.Infrastructure.Providers.Captcha;
 
 namespace SeatHunter.Infrastructure.Providers;
 
 public class UniversalProvider : ITicketProvider
 {
-    public string ProviderName => "Universal";
+    public string ProviderName => AppConstants.Providers.Universal;
     private readonly HttpClient _httpClient;
+    private readonly IPlaywrightBrowserManager _browserManager;
+    private readonly ICaptchaSolver _captchaSolver;
+    private readonly ILogger<UniversalProvider> _logger;
 
-    public UniversalProvider(HttpClient httpClient)
+    private static readonly Regex[] CompiledRegexes = new[]
+    {
+        new Regex("\"isSoldOut\"\\s*:\\s*false", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        new Regex("\"status\"\\s*:\\s*\"available\"", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        new Regex("\"availability\"\\s*:\\s*\"IN_STOCK\"", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        new Regex("\"availableSeats\"\\s*:\\s*\\[[^\\]]+\\]", RegexOptions.Compiled | RegexOptions.IgnoreCase)
+    };
+
+    public UniversalProvider(
+        HttpClient httpClient, 
+        IPlaywrightBrowserManager browserManager,
+        ICaptchaSolver captchaSolver,
+        ILogger<UniversalProvider> logger)
     {
         _httpClient = httpClient;
+        _browserManager = browserManager;
+        _captchaSolver = captchaSolver;
+        _logger = logger;
     }
 
-                public async Task<bool> CheckAvailabilityAsync(string url, CancellationToken cancellationToken)
+    public async Task<bool> CheckAvailabilityAsync(string url, CancellationToken cancellationToken)
     {
         try
         {
-            using var playwright = await Playwright.CreateAsync();
-            await using var browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions { Headless = true });
-            var page = await browser.NewPageAsync();
+            await using var context = await _browserManager.CreateContextAsync();
+            var page = await context.NewPageAsync();
 
             await page.RouteAsync("**/*", async route =>
             {
@@ -41,6 +62,9 @@ public class UniversalProvider : ITicketProvider
             await page.GotoAsync(url, new PageGotoOptions { WaitUntil = WaitUntilState.DOMContentLoaded });
             await Task.Delay(2000, cancellationToken);
             
+            // Bot koruması & CAPTCHA (Turnstile / ReCaptcha) tespiti ve çözümü
+            await PlaywrightCaptchaDetector.DetectAndSolveChallengeAsync(page, _captchaSolver, _logger, cancellationToken);
+
             var html = await page.ContentAsync();
 
             var doc = new HtmlDocument();
@@ -50,20 +74,12 @@ public class UniversalProvider : ITicketProvider
             var scriptNodes = doc.DocumentNode.SelectNodes("//script");
             if (scriptNodes != null)
             {
-                var regexes = new[] 
-                {
-                    new Regex("\"isSoldOut\"\\s*:\\s*false", RegexOptions.IgnoreCase),
-                    new Regex("\"status\"\\s*:\\s*\"available\"", RegexOptions.IgnoreCase),
-                    new Regex("\"availability\"\\s*:\\s*\"IN_STOCK\"", RegexOptions.IgnoreCase),
-                    new Regex("\"availableSeats\"\\s*:\\s*\\[[^\\]]+\\]", RegexOptions.IgnoreCase)
-                };
-
                 foreach (var script in scriptNodes)
                 {
                     var scriptContent = script.InnerHtml;
                     if (string.IsNullOrWhiteSpace(scriptContent)) continue;
                     
-                    if (regexes.Any(r => r.IsMatch(scriptContent)))
+                    if (CompiledRegexes.Any(r => r.IsMatch(scriptContent)))
                     {
                         return true;
                     }
@@ -90,9 +106,8 @@ public class UniversalProvider : ITicketProvider
     {
         try
         {
-            using var playwright = await Playwright.CreateAsync();
-            await using var browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions { Headless = true });
-            var page = await browser.NewPageAsync();
+            await using var context = await _browserManager.CreateContextAsync();
+            var page = await context.NewPageAsync();
 
             await page.RouteAsync("**/*", async route =>
             {
@@ -111,6 +126,10 @@ public class UniversalProvider : ITicketProvider
 
             await page.GotoAsync(url, new PageGotoOptions { WaitUntil = WaitUntilState.DOMContentLoaded });
             await Task.Delay(2000, cancellationToken);
+            
+            // Bot koruması & CAPTCHA (Turnstile / ReCaptcha) tespiti ve çözümü
+            await PlaywrightCaptchaDetector.DetectAndSolveChallengeAsync(page, _captchaSolver, _logger, cancellationToken);
+
             var html = await page.ContentAsync();
 
             var doc = new HtmlDocument();

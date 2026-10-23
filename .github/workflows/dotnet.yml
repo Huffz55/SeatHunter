@@ -7,17 +7,21 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build:
+  build-and-test:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v3
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET 10
+      uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '10.0.x'
+
     - name: Restore dependencies
       run: dotnet restore SeatHunter.slnx
+
     - name: Build
       run: dotnet build SeatHunter.slnx --no-restore --configuration Release
+
     - name: Test
       run: dotnet test SeatHunter.slnx --no-build --verbosity normal --configuration Release

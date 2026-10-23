@@ -10,6 +10,9 @@ using SeatHunter.Infrastructure.Messaging;
 using SeatHunter.Infrastructure.Persistence;
 using SeatHunter.Infrastructure.Persistence.Repositories;
 using SeatHunter.Infrastructure.Providers;
+using SeatHunter.Infrastructure.Providers.Captcha;
+using SeatHunter.Infrastructure.Providers.Proxy;
+using SeatHunter.Infrastructure.Reservation;
 
 namespace SeatHunter.Infrastructure;
 
@@ -102,8 +105,14 @@ public static class DependencyInjection
             client.DefaultRequestHeaders.Add("Accept-Language", "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7");
         });
 
+        services.AddSingleton<IProxyRotationService, ProxyRotationService>();
+        services.AddSingleton<IPlaywrightBrowserManager, PlaywrightBrowserManager>();
+        services.AddSingleton<IRabbitMqConnectionManager, RabbitMqConnectionManager>();
+        services.AddSingleton<MockCaptchaSolver>();
+        services.AddHttpClient<ICaptchaSolver, CapSolverService>();
+        services.AddSingleton<MockTicketReservationEngine>();
+        services.AddScoped<ITicketReservationEngine, PlaywrightTicketReservationEngine>();
         services.AddScoped<ITicketProviderFactory, TicketProviderFactory>();
-
         services.AddScoped<IMessagePublisher, RabbitMqPublisher>();
 
         services.AddStackExchangeRedisCache(options => 
@@ -114,7 +123,20 @@ public static class DependencyInjection
         services.AddScoped<ICacheService, SeatHunter.Infrastructure.Caching.RedisCacheService>();
         services.AddScoped<IEmailService, SeatHunter.Infrastructure.Services.RealEmailService>();
         services.AddScoped<ITelegramService, SeatHunter.Infrastructure.Services.RealTelegramService>();
+        services.AddHttpClient<IDiscordService, SeatHunter.Infrastructure.Services.RealDiscordService>();
+        services.AddScoped<INotificationDispatcher, SeatHunter.Infrastructure.Services.NotificationDispatcher>();
         services.AddScoped<IAuthService, SeatHunter.Infrastructure.Services.AuthService>();
+        services.AddSingleton<IScraperMetrics, SeatHunter.Infrastructure.Telemetry.ScraperMetrics>();
+        services.AddTransient<SeatHunter.Infrastructure.HealthChecks.ProxyPoolHealthCheck>();
+
+        var redisConn = configuration.GetConnectionString("Redis") ?? "localhost:6379";
+        services.AddSingleton<StackExchange.Redis.IConnectionMultiplexer>(_ =>
+        {
+            var options = StackExchange.Redis.ConfigurationOptions.Parse(redisConn);
+            options.AbortOnConnectFail = false;
+            return StackExchange.Redis.ConnectionMultiplexer.Connect(options);
+        });
+        services.AddSingleton<IDistributedHuntScheduler, SeatHunter.Infrastructure.Scheduling.RedisDistributedHuntScheduler>();
 
         return services;
     }

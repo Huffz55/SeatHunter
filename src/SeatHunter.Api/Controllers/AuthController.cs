@@ -2,10 +2,13 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SeatHunter.Application.Interfaces;
 
+using SeatHunter.Domain.Constants;
+
 namespace SeatHunter.Api.Controllers;
 
 [Route("api/[controller]")]
 [ApiController]
+[Microsoft.AspNetCore.RateLimiting.EnableRateLimiting(AppConstants.RateLimiting.FixedPolicy)]
 public class AuthController : ControllerBase
 {
     private readonly IAuthService _authService;

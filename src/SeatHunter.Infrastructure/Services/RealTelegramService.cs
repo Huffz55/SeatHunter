@@ -8,19 +8,26 @@ namespace SeatHunter.Infrastructure.Services;
 public class RealTelegramService : ITelegramService
 {
     private readonly TelegramBotClient _botClient;
-    private readonly string _chatId = "2051304885";
+    private readonly string _chatId;
     private readonly ILogger<RealTelegramService> _logger;
 
     public RealTelegramService(ILogger<RealTelegramService> logger, IConfiguration configuration)
     {
         _logger = logger;
+        
         var token = configuration["Telegram:BotToken"];
         if (string.IsNullOrWhiteSpace(token))
         {
-            _logger.LogWarning("Telegram BotToken is missing in configuration!");
+            _logger.LogWarning("Telegram:BotToken konfigürasyonda bulunamadı!");
             token = "INVALID_TOKEN";
         }
         _botClient = new TelegramBotClient(token);
+
+        _chatId = configuration["Telegram:ChatId"] ?? "2051304885";
+        if (string.IsNullOrWhiteSpace(configuration["Telegram:ChatId"]))
+        {
+            _logger.LogInformation("Telegram:ChatId konfigürasyonda belirtilmediği için varsayılan id kullanılıyor.");
+        }
     }
 
     public async Task SendMessageAsync(string message, CancellationToken cancellationToken = default)

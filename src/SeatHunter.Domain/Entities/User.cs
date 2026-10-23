@@ -7,5 +7,6 @@ public class User
     public string FirstName { get; set; } = string.Empty;
     public string LastName { get; set; } = string.Empty;
     public string PasswordHash { get; set; } = string.Empty;
+    public Enums.UserTier Tier { get; set; } = Enums.UserTier.Free;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
