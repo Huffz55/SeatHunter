@@ -152,9 +152,14 @@ public class RabbitMqListenerService : BackgroundService
 
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 bool isAvailable;
+                decimal? parsedPrice = null;
                 try
                 {
                     isAvailable = await provider.CheckAvailabilityAsync(routeOrEventId, stoppingToken);
+                    if (isAvailable)
+                    {
+                        parsedPrice = await provider.ExtractPriceAsync(routeOrEventId, stoppingToken);
+                    }
                     sw.Stop();
                     scraperMetrics?.RecordScrapeAttempt(providerName ?? "RabbitMqConsumer", isAvailable ? "found" : "not_found", sw.Elapsed.TotalMilliseconds);
                 }
@@ -175,50 +180,87 @@ public class RabbitMqListenerService : BackgroundService
 
                         var user = await dbContext.Users.FindAsync(new object[] { userId }, stoppingToken);
 
-                        bool isAutoReserve = payload.TryGetProperty("AutoReserveEnabled", out var autoProp) && autoProp.GetBoolean();
-                        bool isReserved = false;
-                        string? cartUrl = null;
-                        DateTime? reservedUntil = null;
+                        decimal? maxPrice = payload.TryGetProperty("MaxPrice", out var priceProp) && priceProp.TryGetDecimal(out var decPrice) ? decPrice : null;
+                        decimal observedPrice = parsedPrice ?? maxPrice ?? 750m;
 
-                        if (isAutoReserve && user?.Tier == SeatHunter.Domain.Enums.UserTier.Vip)
+                        // Dinamik Fiyat Takibi ve Fiyat Düşüş Değerlendirmesi
+                        var priceHistoryService = scope.ServiceProvider.GetService<ITicketPriceHistoryService>();
+                        PriceEvaluationResult? priceEval = null;
+                        if (priceHistoryService != null)
                         {
-                            var reservationEngine = scope.ServiceProvider.GetService<ITicketReservationEngine>();
-                            if (reservationEngine != null)
-                            {
-                                Guid.TryParse(requestId, out var reqGuid);
-                                var mockHunt = new SeatHunter.Domain.Entities.HuntRequest
-                                {
-                                    Id = reqGuid,
-                                    UserId = userId,
-                                    ProviderName = providerName ?? "UnknownProvider",
-                                    RouteOrEventId = routeOrEventId,
-                                    AutoReserveEnabled = true
-                                };
-                                var reserveResult = await reservationEngine.AttemptReserveAsync(mockHunt, stoppingToken);
-                                if (reserveResult.IsSuccess)
-                                {
-                                    isReserved = true;
-                                    cartUrl = reserveResult.CartUrl;
-                                    reservedUntil = reserveResult.ExpiresAt;
-                                }
-                            }
+                            priceEval = await priceHistoryService.RecordPriceObservationAsync(
+                                routeOrEventId: routeOrEventId,
+                                providerName: providerName ?? "UnknownProvider",
+                                eventName: routeOrEventId,
+                                observedPrice: observedPrice,
+                                categoryName: payload.TryGetProperty("PreferredCategory", out var catProp) ? catProp.GetString() : null,
+                                userMaxPrice: maxPrice,
+                                cancellationToken: stoppingToken
+                            );
                         }
 
-                        Guid.TryParse(requestId, out var parsedReqGuid);
-                        var notification = new SeatHunter.Application.Interfaces.TicketFoundNotification(
-                            RequestId: parsedReqGuid,
-                            UserId: userId,
-                            UserEmail: user?.Email,
-                            ProviderName: providerName ?? "UnknownProvider",
-                            RouteOrEventId: routeOrEventId,
-                            EventName: routeOrEventId,
-                            Language: "tr",
-                            IsAutoReserved: isReserved,
-                            ReservationCartUrl: cartUrl,
-                            ReservedUntil: reservedUntil
-                        );
+                        // MaxPrice Bütçe Kriteri Kontrolü:
+                        bool priceMatches = true;
+                        if (maxPrice.HasValue && parsedPrice.HasValue)
+                        {
+                            priceMatches = parsedPrice.Value <= maxPrice.Value;
+                        }
 
-                        await notificationDispatcher.DispatchTicketFoundAsync(notification, stoppingToken);
+                        if (priceMatches)
+                        {
+                            bool isAutoReserve = payload.TryGetProperty("AutoReserveEnabled", out var autoProp) && autoProp.GetBoolean();
+                            bool isReserved = false;
+                            string? cartUrl = null;
+                            DateTime? reservedUntil = null;
+
+                            if (isAutoReserve && user?.Tier == SeatHunter.Domain.Enums.UserTier.Vip)
+                            {
+                                var reservationEngine = scope.ServiceProvider.GetService<ITicketReservationEngine>();
+                                if (reservationEngine != null)
+                                {
+                                    Guid.TryParse(requestId, out var reqGuid);
+                                    var mockHunt = new SeatHunter.Domain.Entities.HuntRequest
+                                    {
+                                        Id = reqGuid,
+                                        UserId = userId,
+                                        ProviderName = providerName ?? "UnknownProvider",
+                                        RouteOrEventId = routeOrEventId,
+                                        AutoReserveEnabled = true
+                                    };
+                                    var reserveResult = await reservationEngine.AttemptReserveAsync(mockHunt, stoppingToken);
+                                    if (reserveResult.IsSuccess)
+                                    {
+                                        isReserved = true;
+                                        cartUrl = reserveResult.CartUrl;
+                                        reservedUntil = reserveResult.ExpiresAt;
+                                    }
+                                }
+                            }
+
+                            Guid.TryParse(requestId, out var parsedReqGuid);
+                            var notification = new SeatHunter.Application.Interfaces.TicketFoundNotification(
+                                RequestId: parsedReqGuid,
+                                UserId: userId,
+                                UserEmail: user?.Email,
+                                ProviderName: providerName ?? "UnknownProvider",
+                                RouteOrEventId: routeOrEventId,
+                                EventName: routeOrEventId,
+                                Language: "tr",
+                                IsAutoReserved: isReserved,
+                                ReservationCartUrl: cartUrl,
+                                ReservedUntil: reservedUntil,
+                                ObservedPrice: observedPrice,
+                                IsPriceDrop: priceEval?.IsPriceDrop ?? false,
+                                PriceDropPercentage: priceEval?.DropPercentage,
+                                LowestHistoricalPrice: priceEval?.Summary?.MinPrice
+                            );
+
+                            await notificationDispatcher.DispatchTicketFoundAsync(notification, stoppingToken);
+                        }
+                        else
+                        {
+                            _logger.LogInformation("ℹ️ [RabbitMQ] Bilet satışta fakat başlangıç fiyatı ({ObservedPrice} TL), bütçeden ({MaxPrice} TL) yüksek. Beklemede kalınıyor.", observedPrice, maxPrice);
+                        }
                     }
                 }
             }

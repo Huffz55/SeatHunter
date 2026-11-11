@@ -19,19 +19,34 @@ public class RealEmailService : IEmailService
     public RealEmailService(ILogger<RealEmailService> logger, IConfiguration configuration)
     {
         _logger = logger;
-        _emailFrom = configuration["Email:From"] ?? "mehmethalimbas@gmail.com";
-        _emailPassword = configuration["Email:Password"] ?? "INVALID_PASSWORD";
-        _smtpServer = configuration["Email:SmtpServer"] ?? "smtp.gmail.com";
-        _smtpPort = int.TryParse(configuration["Email:SmtpPort"], out var port) ? port : 587;
+        
+        _emailFrom = configuration["Email:From"] ?? string.Empty;
+        _emailPassword = configuration["Email:Password"] ?? string.Empty;
+
+        var server = configuration["Email:SmtpServer"];
+        _smtpServer = string.IsNullOrWhiteSpace(server) ? "smtp.gmail.com" : server;
+
+        _smtpPort = int.TryParse(configuration["Email:SmtpPort"], out var port) && port > 0 ? port : 587;
     }
 
     public async Task SendTicketFoundEmailAsync(string toEmail, string route, string url, string language)
     {
+        if (string.IsNullOrWhiteSpace(_emailFrom) || string.IsNullOrWhiteSpace(_emailPassword))
+        {
+            _logger.LogWarning("Email:From veya Email:Password yapılandırılmadığı için e-posta gönderimi pasif durumda.");
+            return;
+        }
+
         try
         {
+            // Demo hesaplar (örn: demo@seathunter.com) için e-postayı gerçek geliştirici adresine yönlendir
+            var targetRecipient = (string.IsNullOrWhiteSpace(toEmail) || toEmail.EndsWith("@seathunter.com", StringComparison.OrdinalIgnoreCase))
+                ? _emailFrom
+                : toEmail;
+
             var message = new MimeMessage();
             message.From.Add(new MailboxAddress("Seat Hunter", _emailFrom));
-            message.To.Add(new MailboxAddress("", toEmail));
+            message.To.Add(new MailboxAddress("", targetRecipient));
 
             bool isEn = language.ToLowerInvariant() == "en";
             message.Subject = isEn ? "Seat Hunter - Ticket Found!" : "Seat Hunter - Bilet Bulundu!";
@@ -72,7 +87,7 @@ public class RealEmailService : IEmailService
             await client.SendAsync(message);
             await client.DisconnectAsync(true);
 
-            _logger.LogInformation("Gerçek EMAIL BAŞARIYLA GÖNDERİLDİ -> Alıcı: {ToEmail}, Rota: {Route}", toEmail, safeRoute);
+            _logger.LogInformation("Gerçek EMAIL BAŞARIYLA GÖNDERİLDİ -> Alıcı: {ToEmail} (Orijinal: {OriginalEmail}), Rota: {Route}", targetRecipient, toEmail, safeRoute);
         }
         catch (Exception ex)
         {

@@ -11,6 +11,8 @@ public class SeatHunterDbContext : DbContext
     public DbSet<User> Users { get; set; }
     public DbSet<Route> Routes { get; set; }
     public DbSet<Ticket> Tickets { get; set; }
+    public DbSet<PriceSnapshot> PriceSnapshots { get; set; }
+    public DbSet<UserNotification> Notifications { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -20,6 +22,16 @@ public class SeatHunterDbContext : DbContext
         modelBuilder.Entity<User>().HasKey(x => x.Id);
         modelBuilder.Entity<Route>().HasKey(x => x.Id);
         modelBuilder.Entity<Ticket>().HasKey(x => x.Id);
+        modelBuilder.Entity<PriceSnapshot>().HasKey(x => x.Id);
+        modelBuilder.Entity<UserNotification>().HasKey(x => x.Id);
+
+        modelBuilder.Entity<UserNotification>()
+            .HasIndex(x => new { x.UserId, x.CreatedAt })
+            .HasDatabaseName("IX_Notifications_UserId_CreatedAt");
+
+        modelBuilder.Entity<UserNotification>()
+            .HasIndex(x => new { x.UserId, x.IsRead })
+            .HasDatabaseName("IX_Notifications_UserId_IsRead");
 
         // Performans İndeksleri
         modelBuilder.Entity<HuntRequest>()
@@ -29,6 +41,10 @@ public class SeatHunterDbContext : DbContext
         modelBuilder.Entity<HuntRequest>()
             .HasIndex(x => x.UserId)
             .HasDatabaseName("IX_HuntRequests_UserId");
+
+        modelBuilder.Entity<PriceSnapshot>()
+            .HasIndex(x => new { x.RouteOrEventId, x.RecordedAt })
+            .HasDatabaseName("IX_PriceSnapshots_RouteOrEventId_RecordedAt");
 
         // Benzersiz Kullanıcı E-posta İndeksi
         modelBuilder.Entity<User>()

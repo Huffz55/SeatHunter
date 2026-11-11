@@ -7,7 +7,7 @@ namespace SeatHunter.Infrastructure.Services;
 
 public class RealTelegramService : ITelegramService
 {
-    private readonly TelegramBotClient _botClient;
+    private readonly TelegramBotClient? _botClient;
     private readonly string _chatId;
     private readonly ILogger<RealTelegramService> _logger;
 
@@ -18,20 +18,34 @@ public class RealTelegramService : ITelegramService
         var token = configuration["Telegram:BotToken"];
         if (string.IsNullOrWhiteSpace(token))
         {
-            _logger.LogWarning("Telegram:BotToken konfigürasyonda bulunamadı!");
-            token = "INVALID_TOKEN";
+            _logger.LogWarning("Telegram:BotToken yapılandırılmadığı için Telegram bildirimleri pasif durumda.");
+            _botClient = null;
         }
-        _botClient = new TelegramBotClient(token);
-
-        _chatId = configuration["Telegram:ChatId"] ?? "2051304885";
-        if (string.IsNullOrWhiteSpace(configuration["Telegram:ChatId"]))
+        else
         {
-            _logger.LogInformation("Telegram:ChatId konfigürasyonda belirtilmediği için varsayılan id kullanılıyor.");
+            try
+            {
+                _botClient = new TelegramBotClient(token);
+                _logger.LogInformation("TelegramBotClient başarıyla başlatıldı.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Telegram:BotToken geçersiz formatta olduğu için Telegram bildirimleri pasif durumda.");
+                _botClient = null;
+            }
         }
+
+        _chatId = configuration["Telegram:ChatId"] ?? string.Empty;
     }
 
     public async Task SendMessageAsync(string message, CancellationToken cancellationToken = default)
     {
+        if (_botClient == null || string.IsNullOrWhiteSpace(_chatId))
+        {
+            _logger.LogWarning("Telegram bot istemcisi veya ChatId yapılandırılmadığı için mesaj iletilemedi: {Message}", message);
+            return;
+        }
+
         try
         {
             await _botClient.SendMessage(chatId: _chatId, text: message, cancellationToken: cancellationToken);

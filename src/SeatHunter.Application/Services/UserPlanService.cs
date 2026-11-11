@@ -48,6 +48,10 @@ public class UserPlanService : IUserPlanService
     public async Task ValidateHuntCreationAsync(string userId, CreateHuntRequestCommand command, CancellationToken cancellationToken = default)
     {
         var user = await _userRepository.GetByIdAsync(userId, cancellationToken);
+        if (user != null && !user.IsActive)
+        {
+            throw new UnauthorizedAccessException("Hesabınız askıya alınmıştır. Yeni tarama başlatamazsınız.");
+        }
         var tier = user?.Tier ?? UserTier.Free;
         var limits = GetLimitsForTier(tier);
 

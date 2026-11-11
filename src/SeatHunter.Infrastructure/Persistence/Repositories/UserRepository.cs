@@ -29,6 +29,11 @@ public class UserRepository : IUserRepository
         return await _context.Users.FirstOrDefaultAsync(x => x.Email == email, cancellationToken);
     }
 
+    public async Task<List<User>> GetAllUsersAsync(CancellationToken cancellationToken = default)
+    {
+        return await _context.Users.OrderByDescending(x => x.CreatedAt).ToListAsync(cancellationToken);
+    }
+
     public async Task UpdateAsync(User user, CancellationToken cancellationToken = default)
     {
         _context.Users.Update(user);

@@ -28,6 +28,10 @@ try
     builder.Services.AddSwaggerGen();
 
     var jwtSettings = builder.Configuration.GetSection("Jwt");
+    var jwtKey = !string.IsNullOrWhiteSpace(jwtSettings["Key"]) 
+        ? jwtSettings["Key"]! 
+        : "SeatHunterSuperSecretDevelopmentKeyMustBeAtLeast32BytesLong!";
+
     builder.Services.AddAuthentication(Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerDefaults.AuthenticationScheme)
         .AddJwtBearer(options =>
         {
@@ -37,9 +41,9 @@ try
                 ValidateAudience = true,
                 ValidateLifetime = true,
                 ValidateIssuerSigningKey = true,
-                ValidIssuer = jwtSettings["Issuer"],
-                ValidAudience = jwtSettings["Audience"],
-                IssuerSigningKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(jwtSettings["Key"]!))
+                ValidIssuer = !string.IsNullOrWhiteSpace(jwtSettings["Issuer"]) ? jwtSettings["Issuer"] : "SeatHunterSaaS",
+                ValidAudience = !string.IsNullOrWhiteSpace(jwtSettings["Audience"]) ? jwtSettings["Audience"] : "SeatHunterClients",
+                IssuerSigningKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(jwtKey))
             };
 
             options.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
@@ -48,7 +52,8 @@ try
                 {
                     var accessToken = context.Request.Query["access_token"];
                     var path = context.HttpContext.Request.Path;
-                    if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/notificationHub"))
+                    if (!string.IsNullOrEmpty(accessToken) && 
+                        (path.StartsWithSegments("/notificationHub") || path.StartsWithSegments("/adminHub")))
                     {
                         context.Token = accessToken;
                     }
@@ -61,22 +66,35 @@ try
     {
         options.AddPolicy("CorsPolicy", policy =>
         {
-            policy.SetIsOriginAllowed(_ => true)
-                  .AllowAnyMethod()
-                  .AllowAnyHeader()
-                  .AllowCredentials();
+            if (builder.Environment.IsDevelopment())
+            {
+                policy.SetIsOriginAllowed(_ => true)
+                      .AllowAnyMethod()
+                      .AllowAnyHeader()
+                      .AllowCredentials();
+            }
+            else
+            {
+                var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() 
+                    ?? new[] { "https://seathunter.com" };
+                policy.WithOrigins(allowedOrigins)
+                      .AllowAnyMethod()
+                      .AllowAnyHeader()
+                      .AllowCredentials();
+            }
         });
     });
 
     builder.Services.AddSignalR();
     builder.Services.AddScoped<SeatHunter.Application.Interfaces.ISignalRNotifier, SeatHunter.Api.Services.SignalRNotifier>();
+    builder.Services.AddScoped<SeatHunter.Application.Interfaces.IAdminNotifier, SeatHunter.Api.Services.AdminNotifier>();
 
     builder.Services.AddRateLimiter(options =>
     {
         options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
         options.AddFixedWindowLimiter(AppConstants.RateLimiting.FixedPolicy, opt =>
         {
-            opt.PermitLimit = 3;
+            opt.PermitLimit = 20;
             opt.Window = TimeSpan.FromSeconds(10);
             opt.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
             opt.QueueLimit = 0;
@@ -107,6 +125,16 @@ try
         db.Database.Migrate();
     }
     
+    app.Use(async (context, next) =>
+    {
+        context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
+        context.Response.Headers.Append("X-Frame-Options", "DENY");
+        context.Response.Headers.Append("Referrer-Policy", "strict-origin-when-cross-origin");
+        context.Response.Headers.Append("X-XSS-Protection", "1; mode=block");
+        await next();
+    });
+
+    app.UseDefaultFiles();
     app.UseStaticFiles();
     app.UseMiddleware<SeatHunter.Api.Middlewares.ExceptionMiddleware>();
     if (app.Environment.IsDevelopment()) 
@@ -135,6 +163,7 @@ try
         }
     });
     app.MapHub<SeatHunter.Api.Hubs.NotificationHub>("/notificationHub");
+    app.MapHub<SeatHunter.Api.Hubs.AdminHub>("/adminHub");
 
     app.Run();
 }

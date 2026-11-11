@@ -80,4 +80,46 @@ public class CreateHuntRequestCommandHandlerTests
 
         await act.Should().ThrowAsync<ArgumentException>();
     }
+
+    [Fact]
+    public async Task Handle_Should_PersistStartNotification_WhenNotificationRepositoryProvided()
+    {
+        var mockRepo = new Mock<IHuntRequestRepository>();
+        var mockPublisher = new Mock<IMessagePublisher>();
+        var mockFactory = new Mock<ITicketProviderFactory>();
+        var mockProvider = new Mock<ITicketProvider>();
+        var mockPlanService = new Mock<IUserPlanService>();
+        var mockScheduler = new Mock<IDistributedHuntScheduler>();
+        var mockNotificationRepo = new Mock<INotificationRepository>();
+
+        mockProvider.Setup(p => p.ProviderName).Returns("Universal");
+        mockFactory.Setup(f => f.GetProvider(It.IsAny<string>())).Returns(mockProvider.Object);
+
+        var handler = new CreateHuntRequestCommandHandler(
+            mockRepo.Object,
+            mockPublisher.Object,
+            mockFactory.Object,
+            mockPlanService.Object,
+            mockScheduler.Object,
+            mockNotificationRepo.Object);
+
+        var command = new CreateHuntRequestCommand(
+            UserId: "user-notif-1",
+            Url: "https://example.com/konser",
+            TargetDate: DateTime.UtcNow,
+            Language: "tr",
+            TargetEventName: "Akustik Gece"
+        );
+
+        await handler.Handle(command, CancellationToken.None);
+
+        mockNotificationRepo.Verify(n => n.AddAsync(
+            It.Is<UserNotification>(item =>
+                item.UserId == "user-notif-1" &&
+                item.Title == "Tarama Başlatıldı" &&
+                item.Type == "info" &&
+                item.Message.Contains("Akustik Gece") &&
+                item.RelatedUrl == "https://example.com/konser"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
 }

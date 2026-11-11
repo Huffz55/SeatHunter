@@ -10,7 +10,11 @@ public record TicketFoundNotification(
     string Language = "tr",
     bool IsAutoReserved = false,
     string? ReservationCartUrl = null,
-    DateTime? ReservedUntil = null
+    DateTime? ReservedUntil = null,
+    decimal? ObservedPrice = null,
+    bool IsPriceDrop = false,
+    decimal? PriceDropPercentage = null,
+    decimal? LowestHistoricalPrice = null
 );
 
 public interface INotificationDispatcher

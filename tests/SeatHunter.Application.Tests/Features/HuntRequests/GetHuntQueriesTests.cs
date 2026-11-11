@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Moq;
+using SeatHunter.Application.Features.HuntRequests.Queries;
 using SeatHunter.Application.Features.HuntRequests.Queries.GetHuntHistory;
 using SeatHunter.Application.Features.HuntRequests.Queries.GetRecentHunts;
 using SeatHunter.Application.Interfaces;
@@ -92,5 +93,32 @@ public class GetHuntQueriesTests
         result[0].Provider.Should().Be("ObiletLive");
         result[0].EventName.Should().Be("Ankara - Istanbul");
         result[0].Status.Should().Be("Active");
+    }
+
+    [Fact]
+    public async Task GetActiveRequestsQueryHandler_ShouldDelegateToGetActiveByUserIdAsync()
+    {
+        var mockRepo = new Mock<IHuntRequestRepository>();
+        var activeHunt = new HuntRequest
+        {
+            Id = Guid.NewGuid(),
+            UserId = "user-active",
+            ProviderName = "Universal",
+            RouteOrEventId = "https://example.com/active-show",
+            EventName = "Aktif Konser",
+            Status = RequestStatus.Active
+        };
+
+        mockRepo.Setup(r => r.GetActiveByUserIdAsync("user-active", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<HuntRequest> { activeHunt });
+
+        var handler = new GetActiveRequestsQueryHandler(mockRepo.Object);
+        var result = await handler.Handle(new GetActiveRequestsQuery("user-active"), CancellationToken.None);
+
+        result.Should().ContainSingle();
+        result[0].Id.Should().Be(activeHunt.Id);
+        result[0].Status.Should().Be(RequestStatus.Active);
+        mockRepo.Verify(r => r.GetActiveByUserIdAsync("user-active", It.IsAny<CancellationToken>()), Times.Once);
+        mockRepo.Verify(r => r.GetRecentByUserIdAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

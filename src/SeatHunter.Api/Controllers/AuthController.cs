@@ -22,11 +22,11 @@ public class AuthController : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
-        var token = await _authService.LoginAsync(request.Email, request.Password);
-        if (token == null)
-            return Unauthorized(new { message = "Geçersiz e-posta veya şifre." });
+        var authResult = await _authService.LoginAsync(request.Email, request.Password);
+        if (authResult == null)
+            return Unauthorized(new { message = "Geçersiz e-posta/şifre veya hesabınız askıya alınmış olabilir." });
 
-        return Ok(new { token });
+        return Ok(authResult);
     }
 
     [HttpPost("register")]

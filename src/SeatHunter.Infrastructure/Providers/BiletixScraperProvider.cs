@@ -14,7 +14,7 @@ public class BiletixScraperProvider : ITicketProvider
         _httpClient = httpClient;
     }
 
-        public async Task<bool> CheckAvailabilityAsync(string url, CancellationToken cancellationToken)
+    public async Task<bool> CheckAvailabilityAsync(string url, CancellationToken cancellationToken)
     {
         try
         {
@@ -54,7 +54,7 @@ public class BiletixScraperProvider : ITicketProvider
         }
     }
 
-        public async Task<string> ExtractEventNameAsync(string url, CancellationToken cancellationToken)
+    public async Task<string> ExtractEventNameAsync(string url, CancellationToken cancellationToken)
     {
         try
         {
@@ -76,5 +76,24 @@ public class BiletixScraperProvider : ITicketProvider
         }
         catch { }
         return string.Empty;
+    }
+
+    public async Task<decimal?> ExtractPriceAsync(string url, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            Headers.ScraperHeaderGenerator.ApplyBrowserHeaders(request);
+
+            var response = await _httpClient.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode) return null;
+
+            var html = await response.Content.ReadAsStringAsync(cancellationToken);
+            return Price.HtmlPriceExtractor.ExtractPrice(html);
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

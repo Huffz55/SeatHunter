@@ -13,19 +13,22 @@ public class CreateHuntRequestCommandHandler : IRequestHandler<CreateHuntRequest
     private readonly ITicketProviderFactory _factory;
     private readonly IUserPlanService _planService;
     private readonly IDistributedHuntScheduler _scheduler;
+    private readonly INotificationRepository? _notificationRepository;
 
     public CreateHuntRequestCommandHandler(
-        IHuntRequestRepository repository, 
-        IMessagePublisher messagePublisher, 
+        IHuntRequestRepository repository,
+        IMessagePublisher messagePublisher,
         ITicketProviderFactory factory,
         IUserPlanService planService,
-        IDistributedHuntScheduler scheduler)
+        IDistributedHuntScheduler scheduler,
+        INotificationRepository? notificationRepository = null)
     {
         _repository = repository;
         _messagePublisher = messagePublisher;
         _factory = factory;
         _planService = planService;
         _scheduler = scheduler;
+        _notificationRepository = notificationRepository;
     }
 
     public async Task<Guid> Handle(CreateHuntRequestCommand request, CancellationToken cancellationToken)
@@ -59,7 +62,9 @@ public class CreateHuntRequestCommandHandler : IRequestHandler<CreateHuntRequest
             UserId = request.UserId,
             ProviderName = provider.ProviderName,
             RouteOrEventId = request.Url,
-            TargetDate = request.TargetDate,
+            TargetDate = (request.TargetDate == default || request.TargetDate <= DateTime.UtcNow)
+                ? DateTime.UtcNow.AddDays(30) 
+                : (request.TargetDate.Kind == DateTimeKind.Utc ? request.TargetDate : request.TargetDate.ToUniversalTime()),
             Language = request.Language ?? "tr",
             EventName = eventName,
             MaxPrice = request.MaxPrice,
@@ -69,6 +74,18 @@ public class CreateHuntRequestCommandHandler : IRequestHandler<CreateHuntRequest
 
         await _repository.AddAsync(huntRequest, cancellationToken);
         await _scheduler.ScheduleHuntAsync(huntRequest.Id, huntRequest.NextScanTime, cancellationToken);
+
+        if (_notificationRepository != null)
+        {
+            await _notificationRepository.AddAsync(new UserNotification
+            {
+                UserId = huntRequest.UserId,
+                Title = "Tarama Başlatıldı",
+                Message = $"\"{eventName}\" için gerçek zamanlı bilet takibi başlatıldı.",
+                Type = "info",
+                RelatedUrl = huntRequest.RouteOrEventId
+            }, cancellationToken);
+        }
 
         var eventMessage = new 
         { 
@@ -110,7 +127,9 @@ public class CreateHuntRequestCommandHandler : IRequestHandler<CreateHuntRequest
         // Özel IP blokları kontrolü (RFC 1918 ve Link-local)
         if (System.Net.IPAddress.TryParse(host, out var ip))
         {
-            if (System.Net.IPAddress.IsLoopback(ip) || ip.ToString().StartsWith("10.") ||
+            var b = ip.GetAddressBytes();
+            bool isPriv172 = b.Length == 4 && b[0] == 172 && b[1] >= 16 && b[1] <= 31;
+            if (System.Net.IPAddress.IsLoopback(ip) || isPriv172 || ip.ToString().StartsWith("10.") ||
                 ip.ToString().StartsWith("192.168.") || ip.ToString().StartsWith("169.254."))
             {
                 throw new ArgumentException("Özel IP adresleri taranamaz.");

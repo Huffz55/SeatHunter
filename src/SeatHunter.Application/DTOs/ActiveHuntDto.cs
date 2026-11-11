@@ -8,4 +8,7 @@ public class ActiveHuntDto
     public string EventName { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
     public string StartTime { get; set; } = string.Empty;
+    public decimal? MaxPrice { get; set; }
+    public string? PreferredCategory { get; set; }
+    public bool AutoReserveEnabled { get; set; }
 }

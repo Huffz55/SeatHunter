@@ -81,4 +81,66 @@ public class CancelHuntRequestCommandHandlerTests
         _mockRepo.Verify(r => r.UpdateAsync(It.IsAny<HuntRequest>(), It.IsAny<CancellationToken>()), Times.Never);
         _mockScheduler.Verify(s => s.RemoveHuntAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    [Fact]
+    public async Task Handle_ShouldPersistCancelNotification_WhenNotificationRepositoryProvided()
+    {
+        var mockNotificationRepo = new Mock<INotificationRepository>();
+        var handlerWithNotifications = new CancelHuntRequestCommandHandler(
+            _mockRepo.Object,
+            _mockHuntManager.Object,
+            _mockScheduler.Object,
+            mockNotificationRepo.Object
+        );
+
+        var requestId = Guid.NewGuid();
+        var hunt = new HuntRequest
+        {
+            Id = requestId,
+            UserId = "valid-user",
+            EventName = "Jazz Gecesi",
+            RouteOrEventId = "https://example.com/jazz",
+            Status = RequestStatus.Active
+        };
+
+        _mockRepo.Setup(r => r.GetByIdAsync(requestId, It.IsAny<CancellationToken>())).ReturnsAsync(hunt);
+
+        var result = await handlerWithNotifications.Handle(new CancelHuntRequestCommand(requestId, "valid-user"), CancellationToken.None);
+
+        result.Should().BeTrue();
+        mockNotificationRepo.Verify(n => n.AddAsync(
+            It.Is<UserNotification>(item =>
+                item.UserId == "valid-user" &&
+                item.Title == "Tarama İptal Edildi" &&
+                item.Type == "warning" &&
+                item.Message.Contains("Jazz Gecesi")),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Handle_ShouldNotPersistNotification_WhenIdorBlocked()
+    {
+        var mockNotificationRepo = new Mock<INotificationRepository>();
+        var handlerWithNotifications = new CancelHuntRequestCommandHandler(
+            _mockRepo.Object,
+            _mockHuntManager.Object,
+            _mockScheduler.Object,
+            mockNotificationRepo.Object
+        );
+
+        var requestId = Guid.NewGuid();
+        var hunt = new HuntRequest
+        {
+            Id = requestId,
+            UserId = "owner-user",
+            Status = RequestStatus.Active
+        };
+
+        _mockRepo.Setup(r => r.GetByIdAsync(requestId, It.IsAny<CancellationToken>())).ReturnsAsync(hunt);
+
+        var result = await handlerWithNotifications.Handle(new CancelHuntRequestCommand(requestId, "other-user"), CancellationToken.None);
+
+        result.Should().BeFalse();
+        mockNotificationRepo.Verify(n => n.AddAsync(It.IsAny<UserNotification>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 }

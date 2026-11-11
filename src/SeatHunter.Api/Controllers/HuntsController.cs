@@ -1,9 +1,10 @@
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using SeatHunter.Application.DTOs;
 using SeatHunter.Application.Features.HuntRequests.Commands.CancelHuntRequest;
+using SeatHunter.Application.Features.HuntRequests.Queries;
 using SeatHunter.Application.Features.HuntRequests.Queries.GetHuntHistory;
-using SeatHunter.Application.Features.HuntRequests.Queries.GetRecentHunts;
 using SeatHunter.Domain.Constants;
 using System.Security.Claims;
 
@@ -48,7 +49,20 @@ public class HuntsController : ControllerBase
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(userId)) return Unauthorized();
 
-        var result = await _mediator.Send(new GetRecentHuntsQuery(userId));
+        var activeRequests = await _mediator.Send(new GetActiveRequestsQuery(userId));
+        var result = activeRequests.Select(r => new ActiveHuntDto
+        {
+            Id = r.Id.ToString(),
+            Provider = r.ProviderName,
+            EventId = r.RouteOrEventId,
+            EventName = r.EventName ?? string.Empty,
+            Status = "Active",
+            StartTime = r.CreatedAt.ToLocalTime().ToString("HH:mm"),
+            MaxPrice = r.MaxPrice,
+            PreferredCategory = r.PreferredCategory,
+            AutoReserveEnabled = r.AutoReserveEnabled
+        }).ToList();
+
         return Ok(result);
     }
 

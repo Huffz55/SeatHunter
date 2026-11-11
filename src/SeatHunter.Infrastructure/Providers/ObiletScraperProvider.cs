@@ -67,4 +67,23 @@ public class ObiletScraperProvider : ITicketProvider
         catch { }
         return string.Empty;
     }
+
+    public async Task<decimal?> ExtractPriceAsync(string url, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            ScraperHeaderGenerator.ApplyBrowserHeaders(request);
+
+            var response = await _httpClient.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode) return null;
+
+            var html = await response.Content.ReadAsStringAsync(cancellationToken);
+            return Price.HtmlPriceExtractor.ExtractPrice(html);
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }

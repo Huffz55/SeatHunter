@@ -6,6 +6,7 @@ using SeatHunter.Application.Interfaces;
 using SeatHunter.Domain.Interfaces;
 using SeatHunter.Domain.Constants;
 using SeatHunter.Infrastructure.Providers.Captcha;
+using SeatHunter.Infrastructure.Providers.Price;
 
 namespace SeatHunter.Infrastructure.Providers;
 
@@ -143,5 +144,22 @@ public class UniversalProvider : ITicketProvider
         }
         catch { }
         return string.Empty;
+    }
+
+    public async Task<decimal?> ExtractPriceAsync(string url, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var context = await _browserManager.CreateContextAsync();
+            var page = await context.NewPageAsync();
+            await page.GotoAsync(url, new PageGotoOptions { WaitUntil = WaitUntilState.DOMContentLoaded, Timeout = 15000 });
+            await Task.Delay(1500, cancellationToken);
+            var content = await page.ContentAsync();
+            return HtmlPriceExtractor.ExtractPrice(content);
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

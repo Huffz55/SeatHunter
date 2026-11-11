@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using SeatHunter.Application.Interfaces;
+using SeatHunter.Domain.Entities;
 
 namespace SeatHunter.Infrastructure.Services;
 
@@ -11,6 +12,8 @@ public class NotificationDispatcher : INotificationDispatcher
     private readonly IDiscordService _discordService;
     private readonly IScraperMetrics _metrics;
     private readonly ILogger<NotificationDispatcher> _logger;
+    private readonly IAdminNotifier? _adminNotifier;
+    private readonly INotificationRepository? _notificationRepository;
 
     public NotificationDispatcher(
         ISignalRNotifier signalRNotifier,
@@ -18,7 +21,9 @@ public class NotificationDispatcher : INotificationDispatcher
         ITelegramService telegramService,
         IDiscordService discordService,
         IScraperMetrics metrics,
-        ILogger<NotificationDispatcher> logger)
+        ILogger<NotificationDispatcher> logger,
+        IAdminNotifier? adminNotifier = null,
+        INotificationRepository? notificationRepository = null)
     {
         _signalRNotifier = signalRNotifier;
         _emailService = emailService;
@@ -26,6 +31,8 @@ public class NotificationDispatcher : INotificationDispatcher
         _discordService = discordService;
         _metrics = metrics;
         _logger = logger;
+        _adminNotifier = adminNotifier;
+        _notificationRepository = notificationRepository;
     }
 
     public async Task DispatchTicketFoundAsync(TicketFoundNotification notification, CancellationToken cancellationToken = default)
@@ -36,6 +43,37 @@ public class NotificationDispatcher : INotificationDispatcher
 
         _logger.LogInformation("🚀 Çok kanallı bildirim dağıtımı başlatılıyor - İstek: {RequestId}, Kullanıcı: {UserId}", notification.RequestId, notification.UserId);
 
+        if (_notificationRepository != null && !string.IsNullOrWhiteSpace(notification.UserId))
+        {
+            try
+            {
+                var targetUrl = notification.IsAutoReserved && !string.IsNullOrEmpty(notification.ReservationCartUrl)
+                    ? notification.ReservationCartUrl
+                    : notification.RouteOrEventId;
+
+                var notifMessage = notification.IsPriceDrop
+                    ? $"{eventTitle} bilet fiyatı {notification.ObservedPrice} TL seviyesine düştü."
+                    : notification.IsAutoReserved && !string.IsNullOrEmpty(notification.ReservationCartUrl)
+                        ? $"{eventTitle} için koltuk otomatik olarak sepete eklendi."
+                        : notification.ObservedPrice.HasValue
+                            ? $"{eventTitle} için uygun bilet bulundu (Fiyat: {notification.ObservedPrice} TL)."
+                            : $"{eventTitle} için uygun bilet bulundu.";
+
+                await _notificationRepository.AddAsync(new UserNotification
+                {
+                    UserId = notification.UserId,
+                    Title = notification.IsPriceDrop ? "Fiyat Düşüşü" : "Bilet Bulundu!",
+                    Message = notifMessage,
+                    Type = "success",
+                    RelatedUrl = targetUrl
+                }, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Bildirim veritabanına kaydedilemedi - İstek: {RequestId}", notification.RequestId);
+            }
+        }
+
         var tasks = new List<Task>
         {
             SendSignalRAsync(notification, eventTitle, cancellationToken),
@@ -43,6 +81,11 @@ public class NotificationDispatcher : INotificationDispatcher
             SendTelegramAsync(notification, eventTitle, cancellationToken),
             SendDiscordAsync(notification, eventTitle, cancellationToken)
         };
+
+        if (_adminNotifier != null)
+        {
+            tasks.Add(_adminNotifier.BroadcastSeatDiscoveredAsync(notification, cancellationToken));
+        }
 
         await Task.WhenAll(tasks);
         _logger.LogInformation("✅ Çok kanallı bildirim dağıtımı tamamlandı - İstek: {RequestId}", notification.RequestId);
@@ -52,9 +95,22 @@ public class NotificationDispatcher : INotificationDispatcher
     {
         try
         {
-            var msg = notification.IsAutoReserved && !string.IsNullOrEmpty(notification.ReservationCartUrl)
-                ? $"⚡ VIP REZERVASYON: {notification.ProviderName} üzerinde {eventTitle} koltuğunuz sepete eklendi! Satın al: {notification.ReservationCartUrl}"
-                : $"{notification.ProviderName} üzerinde {eventTitle} rotası için boş koltuk yakalandı!";
+            string msg;
+            if (notification.IsPriceDrop)
+            {
+                msg = $"📉 FİYAT DÜŞÜŞÜ: {eventTitle} bilet fiyatı {notification.ObservedPrice} TL'ye düştü! (%{notification.PriceDropPercentage} İndirim)";
+            }
+            else if (notification.IsAutoReserved && !string.IsNullOrEmpty(notification.ReservationCartUrl))
+            {
+                msg = $"⚡ VIP REZERVASYON: {notification.ProviderName} üzerinde {eventTitle} koltuğunuz sepete eklendi! Satın al: {notification.ReservationCartUrl}";
+            }
+            else
+            {
+                msg = notification.ObservedPrice.HasValue
+                    ? $"{notification.ProviderName} üzerinde {eventTitle} rotası için boş koltuk yakalandı! (Fiyat: {notification.ObservedPrice} TL)"
+                    : $"{notification.ProviderName} üzerinde {eventTitle} rotası için boş koltuk yakalandı!";
+            }
+
             await _signalRNotifier.SendSeatFoundAsync(notification.UserId, notification.RequestId, msg, cancellationToken);
             _metrics.RecordNotificationDispatched("signalr");
         }
@@ -92,9 +148,21 @@ public class NotificationDispatcher : INotificationDispatcher
     {
         try
         {
-            var telegramMessage = notification.IsAutoReserved && !string.IsNullOrEmpty(notification.ReservationCartUrl)
-                ? $"⚡ VIP REZERVASYON ALARMI!\n{notification.UserEmail ?? notification.UserId} için {notification.ProviderName} ({eventTitle}) koltuğu otomatik olarak sepete eklendi.\n⏱️ 10 dakika boyunca adınıza rezerve edildi.\n🛒 Doğrudan Ödeme Linki: {notification.ReservationCartUrl}"
-                : $"🚀 Sistem Raporu: {notification.UserEmail ?? notification.UserId} kullanıcısı için {notification.ProviderName} üzerinde {eventTitle} bileti başarıyla bulundu! 🔗 {notification.RouteOrEventId}";
+            string telegramMessage;
+            if (notification.IsPriceDrop)
+            {
+                telegramMessage = $"📉 FİYAT DÜŞÜŞÜ ALARMI!\n{notification.UserEmail ?? notification.UserId} için {notification.ProviderName} ({eventTitle}) biletinde fiyat indirimi tespit edildi!\n💰 Yeni Fiyat: {notification.ObservedPrice} TL (İndirim: %{notification.PriceDropPercentage})\n🔗 {notification.RouteOrEventId}";
+            }
+            else if (notification.IsAutoReserved && !string.IsNullOrEmpty(notification.ReservationCartUrl))
+            {
+                telegramMessage = $"⚡ VIP REZERVASYON ALARMI!\n{notification.UserEmail ?? notification.UserId} için {notification.ProviderName} ({eventTitle}) koltuğu otomatik olarak sepete eklendi.\n⏱️ 10 dakika boyunca adınıza rezerve edildi.\n🛒 Doğrudan Ödeme Linki: {notification.ReservationCartUrl}";
+            }
+            else
+            {
+                var priceText = notification.ObservedPrice.HasValue ? $" 💰 Fiyat: {notification.ObservedPrice} TL" : string.Empty;
+                telegramMessage = $"🚀 Sistem Raporu: {notification.UserEmail ?? notification.UserId} kullanıcısı için {notification.ProviderName} üzerinde {eventTitle} bileti başarıyla bulundu!{priceText} 🔗 {notification.RouteOrEventId}";
+            }
+
             await _telegramService.SendMessageAsync(telegramMessage, cancellationToken);
             _metrics.RecordNotificationDispatched("telegram");
         }
@@ -112,9 +180,21 @@ public class NotificationDispatcher : INotificationDispatcher
                 ? notification.ReservationCartUrl
                 : notification.RouteOrEventId;
 
-            var titleWithVip = notification.IsAutoReserved
-                ? $"⚡ [VIP REZERVE EDİLDİ] {eventTitle}"
-                : eventTitle;
+            string titleWithVip;
+            if (notification.IsPriceDrop)
+            {
+                titleWithVip = $"📉 [FİYAT İNDİRİMİ %{notification.PriceDropPercentage}] {eventTitle} ({notification.ObservedPrice} TL)";
+            }
+            else if (notification.IsAutoReserved)
+            {
+                titleWithVip = $"⚡ [VIP REZERVE EDİLDİ] {eventTitle}";
+            }
+            else
+            {
+                titleWithVip = notification.ObservedPrice.HasValue 
+                    ? $"{eventTitle} ({notification.ObservedPrice} TL)" 
+                    : eventTitle;
+            }
 
             await _discordService.SendTicketFoundAlertAsync(
                 titleWithVip, 

@@ -5,6 +5,7 @@ using SeatHunter.Domain.Entities;
 using SeatHunter.Domain.Enums;
 using SeatHunter.Domain.Interfaces;
 using SeatHunter.Infrastructure.Persistence;
+using SeatHunter.Infrastructure.Providers;
 using SeatHunter.Domain.Constants;
 
 namespace SeatHunter.Api.BackgroundServices;
@@ -146,12 +147,17 @@ public class ContinuousHuntWorker : BackgroundService
             _logger.LogInformation("{Provider} üzerinden {Route} için tarama yapılıyor...", request.ProviderName, request.RouteOrEventId);
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            bool isFound;
+            bool isAvailable;
+            decimal? parsedPrice = null;
             try
             {
-                isFound = await ticketProvider.CheckAvailabilityAsync(request.RouteOrEventId, token);
+                isAvailable = await ticketProvider.CheckAvailabilityAsync(request.RouteOrEventId, token);
+                if (isAvailable)
+                {
+                    parsedPrice = await ticketProvider.ExtractPriceAsync(request.RouteOrEventId, token);
+                }
                 sw.Stop();
-                scraperMetrics?.RecordScrapeAttempt(request.ProviderName, isFound ? "found" : "not_found", sw.Elapsed.TotalMilliseconds);
+                scraperMetrics?.RecordScrapeAttempt(request.ProviderName, isAvailable ? "found" : "not_found", sw.Elapsed.TotalMilliseconds);
             }
             catch (OperationCanceledException)
             {
@@ -165,6 +171,37 @@ public class ContinuousHuntWorker : BackgroundService
                 scraperMetrics?.RecordScrapeAttempt(request.ProviderName, "error", sw.Elapsed.TotalMilliseconds);
                 throw;
             }
+
+            decimal observedPrice = parsedPrice ?? request.MaxPrice ?? 750m;
+            PriceEvaluationResult? priceEvaluation = null;
+
+            // Fiyat Takibi & Snapshot: Bilet satışta olduğu sürece güncel fiyatı analiz tablosuna kaydet
+            if (isAvailable)
+            {
+                var priceHistoryService = scope.ServiceProvider.GetService<ITicketPriceHistoryService>();
+                if (priceHistoryService != null)
+                {
+                    priceEvaluation = await priceHistoryService.RecordPriceObservationAsync(
+                        routeOrEventId: request.RouteOrEventId,
+                        providerName: request.ProviderName,
+                        eventName: request.EventName,
+                        observedPrice: observedPrice,
+                        categoryName: request.PreferredCategory,
+                        userMaxPrice: request.MaxPrice,
+                        cancellationToken: token
+                    );
+                }
+            }
+
+            // Maksimum Bütçe (MaxPrice) Kriter Kontrolü:
+            // Eğer kullanıcı MaxPrice belirlediyse ve sitedeki başlangıç bilet fiyatı bütçesinden yüksekse, bilet henüz bulunmadı sayılır!
+            bool priceMatches = true;
+            if (request.MaxPrice.HasValue && parsedPrice.HasValue)
+            {
+                priceMatches = parsedPrice.Value <= request.MaxPrice.Value;
+            }
+
+            bool isFound = isAvailable && priceMatches;
             
             if (isFound)
             {
@@ -210,13 +247,21 @@ public class ContinuousHuntWorker : BackgroundService
                     Language: request.Language,
                     IsAutoReserved: isReserved,
                     ReservationCartUrl: cartUrl,
-                    ReservedUntil: reservedUntil
+                    ReservedUntil: reservedUntil,
+                    ObservedPrice: observedPrice,
+                    IsPriceDrop: priceEvaluation?.IsPriceDrop ?? false,
+                    PriceDropPercentage: priceEvaluation?.DropPercentage,
+                    LowestHistoricalPrice: priceEvaluation?.Summary?.MinPrice
                 );
 
                 await notificationDispatcher.DispatchTicketFoundAsync(notification, token);
             }
             else
             {
+                if (isAvailable && !priceMatches)
+                {
+                    _logger.LogInformation("ℹ️ Bilet satışta fakat başlangıç fiyatı ({ObservedPrice} TL), kullanıcının belirlediği maksimum bütçeden ({MaxPrice} TL) yüksek. Tarama devam ediyor. Request ID: {RequestId}", observedPrice, request.MaxPrice, request.Id);
+                }
                 // Etkinlik tarihi geçmişse taramayı sonlandır (Smart Expire)
                 if (request.TargetDate < DateTime.UtcNow)
                 {

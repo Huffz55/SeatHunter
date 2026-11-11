@@ -43,4 +43,9 @@ public class MockProvider : ITicketProvider
     {
         return Task.FromResult("Mock Etkinlik");
     }
+
+    public Task<decimal?> ExtractPriceAsync(string url, CancellationToken cancellationToken)
+    {
+        return Task.FromResult<decimal?>(750m);
+    }
 }

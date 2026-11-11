@@ -29,15 +29,25 @@ public class AuthService : IAuthService
         _logger = logger;
     }
 
-    public async Task<string?> LoginAsync(string email, string password)
+    public async Task<SeatHunter.Application.DTOs.AuthResultDto?> LoginAsync(string email, string password)
     {
         var user = await _userRepository.GetByEmailAsync(email);
-        if (user == null || !VerifyPassword(password, user.PasswordHash))
+        if (user == null || !user.IsActive || !VerifyPassword(password, user.PasswordHash))
         {
-            return null; // Auth failed
+            return null; // Auth failed or account suspended
         }
 
-        return GenerateJwtToken(user);
+        var token = GenerateJwtToken(user);
+        return new SeatHunter.Application.DTOs.AuthResultDto(
+            Token: token,
+            UserId: user.Id,
+            Email: user.Email,
+            FirstName: user.FirstName,
+            LastName: user.LastName,
+            Tier: user.Tier.ToString(),
+            Role: user.Role,
+            IsAdmin: user.Role == "Admin"
+        );
     }
 
     public async Task<bool> RegisterAsync(string email, string password, string firstName, string lastName)
@@ -160,8 +170,12 @@ public class AuthService : IAuthService
             new Claim(JwtRegisteredClaimNames.Sub, user.Id),
             new Claim(ClaimTypes.Email, user.Email),
             new Claim(JwtRegisteredClaimNames.Email, user.Email),
+            new Claim(ClaimTypes.Role, user.Role),
+            new Claim("Role", user.Role),
+            new Claim("IsAdmin", (user.Role == "Admin").ToString().ToLower()),
             new Claim("FirstName", user.FirstName),
-            new Claim("LastName", user.LastName)
+            new Claim("LastName", user.LastName),
+            new Claim("Tier", user.Tier.ToString())
         };
 
         var token = new JwtSecurityToken(
