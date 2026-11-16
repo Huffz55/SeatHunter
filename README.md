@@ -1,65 +1,130 @@
 # 🎟️ SeatHunter SaaS
 
-![Tech Stack](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)
+![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)
+![React](https://img.shields.io/badge/Frontend-React%2018%20%2B%20Vite-61DAFB?logo=react)
 ![Architecture](https://img.shields.io/badge/Architecture-Clean%20%7C%20CQRS-blue)
+![OpenTelemetry](https://img.shields.io/badge/Observability-OpenTelemetry%20%2B%20Prometheus-E6522C?logo=prometheus)
 ![Docker](https://img.shields.io/badge/Docker-Production%20Ready-2496ED?logo=docker)
-![Playwright](https://img.shields.io/badge/Web_Scraping-Playwright-2EAD33?logo=playwright)
-![RabbitMQ](https://img.shields.io/badge/Message_Broker-RabbitMQ-FF6600?logo=rabbitmq)
+![Playwright](https://img.shields.io/badge/Scraping-Playwright-2EAD33?logo=playwright)
+![RabbitMQ](https://img.shields.io/badge/Broker-RabbitMQ-FF6600?logo=rabbitmq)
 ![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL-4169E1?logo=postgresql)
 ![Redis](https://img.shields.io/badge/Cache-Redis-DC382D?logo=redis)
 
 ## 📌 Project Overview
-**SeatHunter** is a highly scalable, advanced B2C ticket-hunting SaaS platform built entirely on **Clean Architecture** and **CQRS (MediatR)** principles. 
 
-Instead of relying on fragile, hardcoded scraper logics, SeatHunter leverages an advanced **Universal Ticket Provider** system. It proactively monitors high-demand events (concerts, buses, airplanes) across global platforms and alerts the user instantaneously via **SignalR**, **Email**, or **Telegram** the millisecond a seat becomes available.
+**SeatHunter** is a multi-tier SaaS ticket-monitoring and seat-discovery platform built with **.NET 10** (**Clean Architecture** + **CQRS / MediatR**) and a modular **React + Vite + Tailwind CSS v4** frontend.
+
+The platform continuously monitors ticket availability and pricing snapshots across static and JavaScript-rendered event pages, enforces tier-based quotas (`Free`, `Pro`, `Vip`), and delivers real-time alerts via **SignalR**, **Email**, **Telegram**, and **Discord**. Administrators manage system infrastructure, Dead Letter Queues (DLQ), and user subscriptions through an isolated **Admin Portal**.
+
+---
 
 ## ✨ Key Features
-- 🕷️ **Hybrid Web Scraping Engine:** 
-  - Extremely fast *HttpClient* mechanism for static websites.
-  - Deep integrated **Microsoft Playwright (Headless Chromium)** implementation for fully rendering dynamic, JavaScript-heavy SPA platforms (e.g., *ingresso.com*, *biletix*). Features a custom **Deep Script Scanner** that intercepts JSON state payloads right inside the DOM to bypass anti-bot protections.
-- ⚡ **Async Event-Driven Architecture:** Decoupled background services utilize **RabbitMQ** to handle high-latency operations (like sending SMTP emails or Telegram alerts) asynchronously ("Fire and Forget"). This prevents API thread starvation and ensures an ultra-responsive user experience.
-- 🚀 **High Performance & Resilience:** Utilizes **Redis** for distributed caching and active hunt session storage, backed by robust **PostgreSQL** for data persistence. Incorporates **Polly** for exponential backoff and circuit-breaking against unstable external ticket providers.
-- 🐳 **Production-Ready & Secure:** Fully containerized utilizing multi-stage Docker builds. The application is published as a `self-contained` Linux binary to guarantee 100% compatibility across environments without requiring .NET runtimes on the host machine. Secrets are strictly managed via environment variables (`.env`).
+
+- **Hybrid Scraping & VIP Auto-Cart Engine**
+  - Fast `HttpClient` pipeline (`HttpScraperProviderBase`) backed by **Microsoft Playwright** headless Chromium rendering (`UniversalProvider`, `BiletixScraperProvider`, `ObiletScraperProvider`) and HTML/JSON DOM evaluation (`TicketHtmlEvaluator`).
+  - Proxy rotation with cooldown tracking, Polly resilience policies, and optional **VIP Auto-Cart** reservation link creation (`PlaywrightTicketReservationEngine`).
+- **Tiered SaaS Billing & Subscriptions**
+  - Database-backed `Subscription` and `PaymentTransaction` entities with `PlanCatalog` (`Free`, `Pro`, `Vip`, monthly & yearly cycles).
+  - Idempotent checkout sessions (`/api/billing/checkout`), HMAC-SHA256 webhook signature verification (`/api/billing/webhook`), sandbox confirmation flow outside production, period-end cancellation, and automated expiry checks (`SubscriptionExpirationWorker`).
+- **Multi-Channel Real-Time Notifications (SSRF-Safe)**
+  - Real-time browser push updates over SignalR (`/notificationHub` & `/adminHub`) with automatic reconnection banner handling.
+  - Per-user channel preferences (`Email`, `Telegram`, personal `TelegramChatId`, personal `DiscordWebhookUrl`) validated against strict host allowlists (`NotificationChannelValidator`), dispatched asynchronously via **RabbitMQ**.
+- **Pro/VIP Price Analytics & Admin Operations Portal**
+  - Historical price snapshots and event min/max/average summaries scoped cleanly by subscription tier (`/api/price-analytics`).
+  - Separate **Admin Portal** featuring live system telemetry, RabbitMQ DLQ inspection/replay/purge (`/api/admin/dlq`), and user tier/status administration (`/api/admin/users`).
+- **Production Observability & Hardening**
+  - **OpenTelemetry** metrics & tracing (`SeatHunter.Engine` activity spans + ASP.NET Core / `HttpClient` telemetry) exposed at `/metrics` for **Prometheus** and configurable OTLP exporters (`OTEL_EXPORTER_OTLP_ENDPOINT`).
+  - Correlation ID propagation (`X-Correlation-ID` via `CorrelationIdMiddleware`) enriched into structured **Serilog** logs, reverse-proxy `ForwardedHeaders`, and separate readiness (`/health`) vs. liveness (`/health/live`) probes.
+
+---
+
+## 🧱 Architecture & Repository Layout
+
+```text
+SeatHunter/
+├── src/
+│   ├── SeatHunter.Domain/           # Entities (User, HuntRequest, Subscription, PaymentTransaction), enums, interfaces
+│   ├── SeatHunter.Application/      # CQRS commands/queries (MediatR), BillingService, HuntExecutionService, validators
+│   ├── SeatHunter.Infrastructure/   # EF Core (PostgreSQL), Redis scheduler, RabbitMQ, Playwright providers, telemetry
+│   └── SeatHunter.Api/              # ASP.NET Core API controllers, SignalR hubs, middlewares, workers, compiled wwwroot
+├── frontend/                        # Modular React 18 + Vite 6 + Tailwind CSS v4 SPA (TR/EN i18n, User & Admin portals)
+└── tests/
+    ├── SeatHunter.Application.Tests/
+    ├── SeatHunter.Infrastructure.Tests/
+    └── SeatHunter.Api.Tests/        # WebApplicationFactory integration tests (Auth, Hunts, Billing, Admin, Observability)
+```
+
+---
 
 ## 🛠️ Tech Stack
-* **Framework:** .NET 10 (Web API)
-* **Architecture:** Clean Architecture, CQRS (MediatR), Strategy & Factory Patterns
-* **Web Scraping:** Microsoft Playwright, HtmlAgilityPack
-* **Database & ORM:** PostgreSQL, Entity Framework Core 10
-* **Caching:** Redis (Distributed Cache)
-* **Message Broker:** RabbitMQ
-* **Containerization:** Docker, Docker Compose
+
+- **Backend:** .NET 10, ASP.NET Core Web API, MediatR, FluentValidation, Serilog, Polly
+- **Frontend:** React 18, Vite 6, Tailwind CSS v4, `@microsoft/signalr`, Font Awesome
+- **Data & Messaging:** PostgreSQL (EF Core 10), Redis, RabbitMQ
+- **Scraping & Browser Automation:** Microsoft Playwright, HtmlAgilityPack
+- **Observability:** OpenTelemetry (Metrics & Tracing), Prometheus Exporter (`/metrics`)
+- **Containers & CI:** Multi-stage Docker (`node:22-alpine` -> `.NET 10 SDK` -> `playwright/dotnet`), Docker Compose, GitHub Actions
 
 ---
 
 ## 🚀 Getting Started
 
-Deploying SeatHunter is remarkably straightforward, as the entire infrastructure (Database, Cache, Message Queue, and the Headless Browser API) is bundled in a single Docker Compose network.
+### Option 1: Docker Compose (Recommended)
 
-### Step 1: Configure Environment Variables
-We use environment variables to keep your credentials perfectly secure. First, create your local configuration file:
-```bash
-# Clone the repository
-git clone https://github.com/Huffz55/SeatHunter.git
-cd SeatHunter
+Docker builds the frontend bundle automatically and runs PostgreSQL, Redis, RabbitMQ, and the self-contained .NET 10 API together.
 
-# Copy the example environment file
-cp .env.example .env
-```
-Open the `.env` file and fill in your actual database passwords, JWT keys, and Telegram/Email credentials.
+1. **Clone and configure environment variables:**
+   ```bash
+   git clone https://github.com/Huffz55/SeatHunter.git
+   cd SeatHunter
+   cp .env.example .env
+   ```
+   Fill in required secrets in `.env` (PostgreSQL credentials, `JWT_KEY`, `BILLING_WEBHOOK_SECRET`, and optional Telegram/Email/Discord/Proxy/OTEL variables).
 
-### Step 2: Build and Run with Docker
-No manual `dotnet run` or local SDK installations are required. To spin up the entire ecosystem, simply run:
-```bash
-docker-compose up -d --build
-```
-*This command will pull the necessary PostgreSQL, Redis, and RabbitMQ images, build the self-contained .NET 10 API, and install the Playwright Chromium dependencies automatically.*
+2. **Build and launch:**
+   ```bash
+   docker compose up -d --build
+   ```
 
-### Step 3: Access the Application
-Once the containers are successfully running, the application and its interactive API documentation will be available at:
-👉 **http://localhost:5179/swagger**
-
-From the Swagger UI, you can register a new user, acquire your JWT token, and immediately start scheduling asynchronous ticket hunts globally.
+3. **Access the endpoints:**
+   - **Web App:** `http://localhost:5179`
+   - **Swagger (Development):** `http://localhost:5179/swagger`
+   - **Liveness / Readiness:** `http://localhost:5179/health/live` · `http://localhost:5179/health`
+   - **Prometheus Metrics:** `http://localhost:5179/metrics`
 
 ---
-*Developed with clean code practices, performance, and scalability in mind.*
+
+### Option 2: Local Development (Frontend + Backend)
+
+Requires **.NET 10 SDK** and **Node.js 22+**.
+
+1. **Build or run the frontend:**
+   ```bash
+   cd frontend
+   npm ci
+   npm run dev      # Vite dev server with /api and SignalR proxies to localhost:5179
+   # or: npm run build  (outputs static assets into src/SeatHunter.Api/wwwroot)
+   ```
+
+2. **Run the API:**
+   ```bash
+   cd src/SeatHunter.Api
+   dotnet run
+   ```
+
+---
+
+## 🧪 Running Tests
+
+Run the full build and automated test suite across Application, Infrastructure, and API Integration layers:
+
+```bash
+dotnet build SeatHunter.slnx --configuration Release
+dotnet test SeatHunter.slnx --configuration Release --no-build
+```
+
+Currently verified with **155 tests passing** (`75` Application, `63` Infrastructure, `17` API Integration).
+
+---
+
+*Built with Clean Architecture, strict tier isolation, observability, and automated verification.*
