@@ -61,4 +61,11 @@ public class HuntRequestRepository : IHuntRequestRepository
             .Take(count)
             .ToListAsync(cancellationToken);
     }
+
+    public async Task<bool> UserHasHuntForRouteAsync(string userId, string routeOrEventId, CancellationToken cancellationToken = default)
+    {
+        return await _context.HuntRequests
+            .AsNoTracking()
+            .AnyAsync(x => x.UserId == userId && x.RouteOrEventId == routeOrEventId, cancellationToken);
+    }
 }

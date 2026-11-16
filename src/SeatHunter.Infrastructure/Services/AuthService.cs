@@ -37,14 +37,31 @@ public class AuthService : IAuthService
             return null; // Auth failed or account suspended
         }
 
-        var token = GenerateJwtToken(user);
+        return CreateAuthResultDto(user);
+    }
+
+    public async Task<SeatHunter.Application.DTOs.AuthResultDto?> RefreshSessionAsync(string userId, CancellationToken cancellationToken = default)
+    {
+        var user = await _userRepository.GetByIdAsync(userId, cancellationToken);
+        if (user == null || !user.IsActive)
+        {
+            return null;
+        }
+
+        return CreateAuthResultDto(user);
+    }
+
+    private SeatHunter.Application.DTOs.AuthResultDto CreateAuthResultDto(User user)
+    {
+        var effectiveTier = user.GetEffectiveTier();
+        var token = GenerateJwtToken(user, effectiveTier);
         return new SeatHunter.Application.DTOs.AuthResultDto(
             Token: token,
             UserId: user.Id,
             Email: user.Email,
             FirstName: user.FirstName,
             LastName: user.LastName,
-            Tier: user.Tier.ToString(),
+            Tier: effectiveTier.ToString(),
             Role: user.Role,
             IsAdmin: user.Role == "Admin"
         );
@@ -158,10 +175,21 @@ public class AuthService : IAuthService
         return CryptographicOperations.FixedTimeEquals(actualHash, expectedHash);
     }
 
-    private string GenerateJwtToken(User user)
+    private string GenerateJwtToken(User user, Domain.Enums.UserTier effectiveTier)
     {
         var jwtSettings = _configuration.GetSection("Jwt");
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings["Key"]!));
+        var rawKey = jwtSettings["Key"];
+        if (string.IsNullOrWhiteSpace(rawKey))
+        {
+            var env = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
+            if (!string.Equals(env, "Development", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Jwt:Key yapılandırılmadığı için JWT token üretilemedi.");
+            }
+            rawKey = "SeatHunterSuperSecretDevelopmentKeyMustBeAtLeast32BytesLong!";
+        }
+
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(rawKey));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
         var claims = new[]
@@ -175,12 +203,15 @@ public class AuthService : IAuthService
             new Claim("IsAdmin", (user.Role == "Admin").ToString().ToLower()),
             new Claim("FirstName", user.FirstName),
             new Claim("LastName", user.LastName),
-            new Claim("Tier", user.Tier.ToString())
+            new Claim("Tier", effectiveTier.ToString())
         };
 
+        var issuer = !string.IsNullOrWhiteSpace(jwtSettings["Issuer"]) ? jwtSettings["Issuer"] : "SeatHunterSaaS";
+        var audience = !string.IsNullOrWhiteSpace(jwtSettings["Audience"]) ? jwtSettings["Audience"] : "SeatHunterClients";
+
         var token = new JwtSecurityToken(
-            issuer: jwtSettings["Issuer"],
-            audience: jwtSettings["Audience"],
+            issuer: issuer,
+            audience: audience,
             claims: claims,
             expires: DateTime.UtcNow.AddDays(7),
             signingCredentials: creds

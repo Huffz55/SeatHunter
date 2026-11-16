@@ -43,7 +43,9 @@ public class CreateHuntRequestCommandHandlerTests
         result.Should().NotBeEmpty(); // Geriye geçerli bir Guid dönmeli
         
         // Repository'nin AddAsync metodunun tam olarak 1 kez çağrıldığını doğrula
-        mockRepo.Verify(r => r.AddAsync(It.IsAny<HuntRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        mockRepo.Verify(r => r.AddAsync(
+            It.Is<HuntRequest>(h => h.NextScanTime > DateTime.UtcNow.AddSeconds(10)),
+            It.IsAny<CancellationToken>()), Times.Once);
         
         // Publisher'ın mesajı kuyruğa tam olarak 1 kez gönderdiğini doğrula
         mockPublisher.Verify(p => p.Publish(It.IsAny<object>(), "hunt_requests_queue"), Times.Once);
@@ -57,6 +59,9 @@ public class CreateHuntRequestCommandHandlerTests
     [InlineData("http://127.0.0.1/admin")]
     [InlineData("http://169.254.169.254/latest/meta-data")]
     [InlineData("http://postgres:5432")]
+    [InlineData("http://[::1]/admin")]
+    [InlineData("http://[fc00::1]/internal")]
+    [InlineData("http://100.64.0.1/metadata")]
     [InlineData("ftp://biletix.com/test")]
     [InlineData("")]
     public async Task Handle_Should_ThrowArgumentException_WhenUrlIsSuspicious(string invalidUrl)

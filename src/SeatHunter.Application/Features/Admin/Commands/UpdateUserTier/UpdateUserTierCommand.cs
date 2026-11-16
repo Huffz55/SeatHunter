@@ -23,6 +23,7 @@ public class UpdateUserTierCommandHandler : IRequestHandler<UpdateUserTierComman
         if (Enum.TryParse<UserTier>(request.Tier, true, out var newTier))
         {
             user.Tier = newTier;
+            user.SubscriptionExpiresAtUtc = null;
             await _userRepository.UpdateAsync(user, cancellationToken);
             return true;
         }

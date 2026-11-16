@@ -52,7 +52,7 @@ public class UserPlanService : IUserPlanService
         {
             throw new UnauthorizedAccessException("Hesabınız askıya alınmıştır. Yeni tarama başlatamazsınız.");
         }
-        var tier = user?.Tier ?? UserTier.Free;
+        var tier = user?.GetEffectiveTier() ?? UserTier.Free;
         var limits = GetLimitsForTier(tier);
 
         // 1. Aktif tarama kotası kontrolü

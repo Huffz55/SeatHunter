@@ -1,4 +1,13 @@
-# 1. Build aşaması: Resmi .NET 10 SDK imajını kullan
+# 1. Frontend Build aşaması: Vite + React SPA paketlemesi
+FROM node:22-alpine AS frontend-build
+WORKDIR /frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN mkdir -p /src/SeatHunter.Api/wwwroot
+RUN npm run build
+
+# 2. Backend Build aşaması: Resmi .NET 10 SDK imajını kullan
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
@@ -10,12 +19,13 @@ COPY ["src/SeatHunter.Infrastructure/SeatHunter.Infrastructure.csproj", "src/Sea
 
 RUN dotnet restore "src/SeatHunter.Api/SeatHunter.Api.csproj"
 
-# Tüm kaynak kodları kopyala ve publish et (self-contained olarak, linux-x64 mimarisine göre)
+# Tüm kaynak kodları kopyala, ardından taze frontend paketini wwwroot içine yerleştir
 COPY . .
+COPY --from=frontend-build /src/SeatHunter.Api/wwwroot ./src/SeatHunter.Api/wwwroot
 WORKDIR "/src/src/SeatHunter.Api"
 RUN dotnet publish "SeatHunter.Api.csproj" -c Release -r linux-x64 --self-contained true -o /app/publish /p:UseAppHost=true
 
-# 2. Çalışma Zamanı (Runtime) aşaması: Microsoft Playwright dotnet imajını kullan (Playwright v1.63.0 ile tam uyumlu)
+# 3. Çalışma Zamanı (Runtime) aşaması: Microsoft Playwright dotnet imajını kullan (Playwright v1.63.0 ile tam uyumlu)
 FROM mcr.microsoft.com/playwright/dotnet:v1.63.0-noble AS final
 WORKDIR /app
 

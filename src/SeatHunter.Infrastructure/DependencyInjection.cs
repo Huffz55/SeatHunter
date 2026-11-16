@@ -29,9 +29,11 @@ public static class DependencyInjection
         services.AddScoped<ITicketRepository, TicketRepository>();
         services.AddScoped<IPriceHistoryRepository, PriceHistoryRepository>();
         services.AddScoped<INotificationRepository, NotificationRepository>();
+        services.AddScoped<ISubscriptionRepository, SubscriptionRepository>();
         services.AddScoped<ITicketPriceHistoryService, SeatHunter.Infrastructure.Services.TicketPriceHistoryService>();
         services.AddScoped<ISystemDashboardRepository, SystemDashboardRepository>();
         services.AddScoped<IDeadLetterReplayService, RabbitMqDeadLetterReplayService>();
+        services.AddSingleton<IPaymentGateway, SeatHunter.Infrastructure.Services.SimulatedPaymentGateway>();
         var userAgents = new[] 
         {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", // Windows Chrome

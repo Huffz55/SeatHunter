@@ -19,10 +19,31 @@ public class RealDiscordService : IDiscordService
         _logger = logger;
     }
 
-    public async Task SendTicketFoundAlertAsync(string eventName, string provider, string url, string? userEmail = null, CancellationToken cancellationToken = default)
+    public Task SendTicketFoundAlertAsync(string eventName, string provider, string url, string? userEmail = null, CancellationToken cancellationToken = default)
+        => SendTicketFoundAlertAsync(eventName, provider, url, userEmail, null, cancellationToken);
+
+    public async Task SendTicketFoundAlertAsync(
+        string eventName,
+        string provider,
+        string url,
+        string? userEmail,
+        string? webhookUrlOverride,
+        CancellationToken cancellationToken = default)
     {
-        var webhookUrl = _configuration["Discord:WebhookUrl"] 
-                         ?? _configuration["DISCORD_WEBHOOK_URL"];
+        string? webhookUrl;
+        if (!string.IsNullOrWhiteSpace(webhookUrlOverride))
+        {
+            if (!SeatHunter.Application.Common.NotificationChannelValidator.IsValidDiscordWebhookUrl(webhookUrlOverride))
+            {
+                _logger.LogWarning("Geçersiz kullanıcı Discord Webhook URL reddedildi: {UserEmail}", userEmail);
+                return;
+            }
+            webhookUrl = webhookUrlOverride.Trim();
+        }
+        else
+        {
+            webhookUrl = _configuration["Discord:WebhookUrl"] ?? _configuration["DISCORD_WEBHOOK_URL"];
+        }
 
         if (string.IsNullOrWhiteSpace(webhookUrl))
         {

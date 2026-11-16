@@ -13,6 +13,8 @@ public class SeatHunterDbContext : DbContext
     public DbSet<Ticket> Tickets { get; set; }
     public DbSet<PriceSnapshot> PriceSnapshots { get; set; }
     public DbSet<UserNotification> Notifications { get; set; }
+    public DbSet<Subscription> Subscriptions { get; set; }
+    public DbSet<PaymentTransaction> PaymentTransactions { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -24,6 +26,30 @@ public class SeatHunterDbContext : DbContext
         modelBuilder.Entity<Ticket>().HasKey(x => x.Id);
         modelBuilder.Entity<PriceSnapshot>().HasKey(x => x.Id);
         modelBuilder.Entity<UserNotification>().HasKey(x => x.Id);
+        modelBuilder.Entity<Subscription>().HasKey(x => x.Id);
+        modelBuilder.Entity<PaymentTransaction>().HasKey(x => x.Id);
+
+        modelBuilder.Entity<Subscription>()
+            .HasIndex(x => new { x.UserId, x.Status })
+            .HasDatabaseName("IX_Subscriptions_UserId_Status");
+
+        modelBuilder.Entity<Subscription>()
+            .HasIndex(x => new { x.Status, x.CurrentPeriodEndUtc })
+            .HasDatabaseName("IX_Subscriptions_Status_PeriodEnd");
+
+        modelBuilder.Entity<PaymentTransaction>()
+            .HasIndex(x => x.ExternalSessionId)
+            .IsUnique()
+            .HasDatabaseName("IX_PaymentTransactions_ExternalSessionId");
+
+        modelBuilder.Entity<PaymentTransaction>()
+            .HasIndex(x => x.IdempotencyKey)
+            .IsUnique()
+            .HasDatabaseName("IX_PaymentTransactions_IdempotencyKey");
+
+        modelBuilder.Entity<PaymentTransaction>()
+            .HasIndex(x => new { x.UserId, x.CreatedAtUtc })
+            .HasDatabaseName("IX_PaymentTransactions_UserId_CreatedAt");
 
         modelBuilder.Entity<UserNotification>()
             .HasIndex(x => new { x.UserId, x.CreatedAt })

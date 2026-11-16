@@ -1,33 +1,48 @@
-using Microsoft.Playwright;
-using System.Text.RegularExpressions;
-using HtmlAgilityPack;
 using Microsoft.Extensions.Logging;
+using Microsoft.Playwright;
 using SeatHunter.Application.Interfaces;
-using SeatHunter.Domain.Interfaces;
 using SeatHunter.Domain.Constants;
+using SeatHunter.Domain.Interfaces;
 using SeatHunter.Infrastructure.Providers.Captcha;
 using SeatHunter.Infrastructure.Providers.Price;
 
 namespace SeatHunter.Infrastructure.Providers;
 
+/// <summary>
+/// Tüm bilet sitelerini Playwright Stealth tarayıcısı üzerinden tek geçişte inceleyen evrensel sağlayıcı.
+/// </summary>
 public class UniversalProvider : ITicketProvider
 {
+    private static readonly string[] UniversalPositiveKeywords =
+    [
+        "bilet al",
+        "buy",
+        "comprar",
+        "satın al",
+        "add to cart",
+        "sepete ekle",
+        "ticket",
+        "tickets",
+        "ingressos",
+        "disponível"
+    ];
+
+    private static readonly string[] UniversalNegativeKeywords =
+    [
+        "sold out",
+        "tükendi",
+        "esgotado",
+        "unavailable"
+    ];
+
     public string ProviderName => AppConstants.Providers.Universal;
     private readonly HttpClient _httpClient;
     private readonly IPlaywrightBrowserManager _browserManager;
     private readonly ICaptchaSolver _captchaSolver;
     private readonly ILogger<UniversalProvider> _logger;
 
-    private static readonly Regex[] CompiledRegexes = new[]
-    {
-        new Regex("\"isSoldOut\"\\s*:\\s*false", RegexOptions.Compiled | RegexOptions.IgnoreCase),
-        new Regex("\"status\"\\s*:\\s*\"available\"", RegexOptions.Compiled | RegexOptions.IgnoreCase),
-        new Regex("\"availability\"\\s*:\\s*\"IN_STOCK\"", RegexOptions.Compiled | RegexOptions.IgnoreCase),
-        new Regex("\"availableSeats\"\\s*:\\s*\\[[^\\]]+\\]", RegexOptions.Compiled | RegexOptions.IgnoreCase)
-    };
-
     public UniversalProvider(
-        HttpClient httpClient, 
+        HttpClient httpClient,
         IPlaywrightBrowserManager browserManager,
         ICaptchaSolver captchaSolver,
         ILogger<UniversalProvider> logger)
@@ -40,71 +55,43 @@ public class UniversalProvider : ITicketProvider
 
     public async Task<bool> CheckAvailabilityAsync(string url, CancellationToken cancellationToken)
     {
-        try
+        var inspection = await InspectAvailabilityAsync(url, null, cancellationToken);
+        return inspection.IsAvailable;
+    }
+
+    public async Task<TicketInspectionResult> InspectAvailabilityAsync(
+        string url,
+        string? preferredCategory = null,
+        CancellationToken cancellationToken = default)
+    {
+        var html = await FetchRenderedHtmlAsync(url, cancellationToken);
+        if (string.IsNullOrWhiteSpace(html))
         {
-            await using var context = await _browserManager.CreateContextAsync();
-            var page = await context.NewPageAsync();
-
-            await page.RouteAsync("**/*", async route =>
-            {
-                if (route.Request.ResourceType == "image" ||
-                    route.Request.ResourceType == "stylesheet" ||
-                    route.Request.ResourceType == "font" ||
-                    route.Request.ResourceType == "media")
-                {
-                    await route.AbortAsync();
-                }
-                else
-                {
-                    await route.ContinueAsync();
-                }
-            });
-
-            await page.GotoAsync(url, new PageGotoOptions { WaitUntil = WaitUntilState.DOMContentLoaded });
-            await Task.Delay(2000, cancellationToken);
-            
-            // Bot koruması & CAPTCHA (Turnstile / ReCaptcha) tespiti ve çözümü
-            await PlaywrightCaptchaDetector.DetectAndSolveChallengeAsync(page, _captchaSolver, _logger, cancellationToken);
-
-            var html = await page.ContentAsync();
-
-            var doc = new HtmlDocument();
-            doc.LoadHtml(html);
-
-            // 1. Script (JSON) Taraması (Deep Script Scanner)
-            var scriptNodes = doc.DocumentNode.SelectNodes("//script");
-            if (scriptNodes != null)
-            {
-                foreach (var script in scriptNodes)
-                {
-                    var scriptContent = script.InnerHtml;
-                    if (string.IsNullOrWhiteSpace(scriptContent)) continue;
-                    
-                    if (CompiledRegexes.Any(r => r.IsMatch(scriptContent)))
-                    {
-                        return true;
-                    }
-                }
-            }
-
-            // 2. HTML Text Taraması
-            var pageText = doc.DocumentNode.InnerText;
-            var positiveKeywords = new[] { "bilet al", "buy", "comprar", "satın al", "add to cart", "sepete ekle", "ticket", "tickets", "ingressos", "disponível" };
-            var negativeKeywords = new[] { "sold out", "tükendi", "esgotado", "unavailable" };
-
-            bool hasNegative = negativeKeywords.Any(k => pageText.Contains(k, StringComparison.OrdinalIgnoreCase));
-            bool hasPositive = positiveKeywords.Any(k => pageText.Contains(k, StringComparison.OrdinalIgnoreCase));
-
-            return !hasNegative && hasPositive;
+            return new TicketInspectionResult(false, null, string.IsNullOrWhiteSpace(preferredCategory));
         }
-        catch
-        {
-            return false;
-        }
+
+        return TicketHtmlEvaluator.Evaluate(
+            html,
+            UniversalPositiveKeywords,
+            UniversalNegativeKeywords,
+            preferredCategory,
+            inspectScriptJson: true);
     }
 
     public async Task<string> ExtractEventNameAsync(string url, CancellationToken cancellationToken)
     {
+        var html = await FetchRenderedHtmlAsync(url, cancellationToken);
+        return string.IsNullOrWhiteSpace(html) ? string.Empty : TicketHtmlEvaluator.ExtractTitle(html);
+    }
+
+    public async Task<decimal?> ExtractPriceAsync(string url, CancellationToken cancellationToken)
+    {
+        var html = await FetchRenderedHtmlAsync(url, cancellationToken);
+        return string.IsNullOrWhiteSpace(html) ? null : HtmlPriceExtractor.ExtractPrice(html);
+    }
+
+    private async Task<string?> FetchRenderedHtmlAsync(string url, CancellationToken cancellationToken)
+    {
         try
         {
             await using var context = await _browserManager.CreateContextAsync();
@@ -112,10 +99,7 @@ public class UniversalProvider : ITicketProvider
 
             await page.RouteAsync("**/*", async route =>
             {
-                if (route.Request.ResourceType == "image" ||
-                    route.Request.ResourceType == "stylesheet" ||
-                    route.Request.ResourceType == "font" ||
-                    route.Request.ResourceType == "media")
+                if (route.Request.ResourceType is "image" or "stylesheet" or "font" or "media")
                 {
                     await route.AbortAsync();
                 }
@@ -125,40 +109,21 @@ public class UniversalProvider : ITicketProvider
                 }
             });
 
-            await page.GotoAsync(url, new PageGotoOptions { WaitUntil = WaitUntilState.DOMContentLoaded });
+            await page.GotoAsync(url, new PageGotoOptions { WaitUntil = WaitUntilState.DOMContentLoaded, Timeout = 15000 });
             await Task.Delay(2000, cancellationToken);
-            
+
             // Bot koruması & CAPTCHA (Turnstile / ReCaptcha) tespiti ve çözümü
             await PlaywrightCaptchaDetector.DetectAndSolveChallengeAsync(page, _captchaSolver, _logger, cancellationToken);
 
-            var html = await page.ContentAsync();
-
-            var doc = new HtmlDocument();
-            doc.LoadHtml(html);
-            
-            var ogTitle = doc.DocumentNode.SelectSingleNode("//meta[@property='og:title']")?.GetAttributeValue("content", "");
-            if (!string.IsNullOrWhiteSpace(ogTitle)) return System.Net.WebUtility.HtmlDecode(ogTitle).Trim();
-            
-            var title = doc.DocumentNode.SelectSingleNode("//title")?.InnerText;
-            if (!string.IsNullOrWhiteSpace(title)) return System.Net.WebUtility.HtmlDecode(title).Trim();
+            return await page.ContentAsync();
         }
-        catch { }
-        return string.Empty;
-    }
-
-    public async Task<decimal?> ExtractPriceAsync(string url, CancellationToken cancellationToken)
-    {
-        try
+        catch (OperationCanceledException)
         {
-            await using var context = await _browserManager.CreateContextAsync();
-            var page = await context.NewPageAsync();
-            await page.GotoAsync(url, new PageGotoOptions { WaitUntil = WaitUntilState.DOMContentLoaded, Timeout = 15000 });
-            await Task.Delay(1500, cancellationToken);
-            var content = await page.ContentAsync();
-            return HtmlPriceExtractor.ExtractPrice(content);
+            throw;
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogDebug(ex, "UniversalProvider sayfa içeriği okunamadı: {Url}", url);
             return null;
         }
     }

@@ -11,4 +11,5 @@ public interface IHuntRequestRepository
     Task<int> GetActiveCountByUserIdAsync(string userId, CancellationToken cancellationToken = default);
     Task<List<HuntRequest>> GetRecentByUserIdAsync(string userId, int count, CancellationToken cancellationToken);
     Task<List<HuntRequest>> GetHistoryByUserIdAsync(string userId, int count, CancellationToken cancellationToken);
+    Task<bool> UserHasHuntForRouteAsync(string userId, string routeOrEventId, CancellationToken cancellationToken = default);
 }

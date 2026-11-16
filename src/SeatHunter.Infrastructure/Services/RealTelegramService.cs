@@ -38,9 +38,13 @@ public class RealTelegramService : ITelegramService
         _chatId = configuration["Telegram:ChatId"] ?? string.Empty;
     }
 
-    public async Task SendMessageAsync(string message, CancellationToken cancellationToken = default)
+    public Task SendMessageAsync(string message, CancellationToken cancellationToken = default)
+        => SendMessageAsync(message, null, cancellationToken);
+
+    public async Task SendMessageAsync(string message, string? targetChatId, CancellationToken cancellationToken = default)
     {
-        if (_botClient == null || string.IsNullOrWhiteSpace(_chatId))
+        var effectiveChatId = !string.IsNullOrWhiteSpace(targetChatId) ? targetChatId.Trim() : _chatId;
+        if (_botClient == null || string.IsNullOrWhiteSpace(effectiveChatId))
         {
             _logger.LogWarning("Telegram bot istemcisi veya ChatId yapılandırılmadığı için mesaj iletilemedi: {Message}", message);
             return;
@@ -48,7 +52,7 @@ public class RealTelegramService : ITelegramService
 
         try
         {
-            await _botClient.SendMessage(chatId: _chatId, text: message, cancellationToken: cancellationToken);
+            await _botClient.SendMessage(chatId: effectiveChatId, text: message, cancellationToken: cancellationToken);
             _logger.LogInformation("Telegram mesajı başarıyla gönderildi: {Message}", message);
         }
         catch (Exception ex)

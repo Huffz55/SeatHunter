@@ -5,6 +5,7 @@
 **/.idea
 **/bin/
 **/obj/
+**/node_modules/
 **/Logs/
 **/*.user
 **/*.suo

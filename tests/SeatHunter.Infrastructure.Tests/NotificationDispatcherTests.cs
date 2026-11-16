@@ -241,4 +241,104 @@ public class NotificationDispatcherTests
         mockSignalR.Verify(s => s.SendSeatFoundAsync("user-resilient", notification.RequestId, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
         mockEmail.Verify(e => e.SendTicketFoundEmailAsync("resilient@example.com", "https://example.com/resilient", "https://example.com/resilient", "tr"), Times.Once);
     }
+
+    [Fact]
+    public async Task DispatchTicketFoundAsync_ShouldSkipDisabledChannels_AndRoutePersonalOverrides()
+    {
+        var mockSignalR = new Mock<ISignalRNotifier>();
+        var mockEmail = new Mock<IEmailService>();
+        var mockTelegram = new Mock<ITelegramService>();
+        var mockDiscord = new Mock<IDiscordService>();
+        var mockMetrics = new Mock<IScraperMetrics>();
+        var mockLogger = new Mock<ILogger<NotificationDispatcher>>();
+
+        var dispatcher = new NotificationDispatcher(
+            mockSignalR.Object,
+            mockEmail.Object,
+            mockTelegram.Object,
+            mockDiscord.Object,
+            mockMetrics.Object,
+            mockLogger.Object
+        );
+
+        var customWebhook = "https://discord.com/api/webhooks/123456789/custom-token";
+        var notification = new TicketFoundNotification(
+            RequestId: Guid.NewGuid(),
+            UserId: "user-prefs",
+            UserEmail: "prefs@example.com",
+            ProviderName: "Universal",
+            RouteOrEventId: "https://example.com/concert",
+            EventName: "Akustik Konser",
+            Language: "tr",
+            NotifyEmail: false,
+            NotifyTelegram: true,
+            NotifyDiscord: true,
+            TelegramChatId: "99887766",
+            DiscordWebhookUrl: customWebhook
+        );
+
+        await dispatcher.DispatchTicketFoundAsync(notification);
+
+        mockEmail.Verify(
+            e => e.SendTicketFoundEmailAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()),
+            Times.Never);
+
+        mockTelegram.Verify(
+            t => t.SendMessageAsync(It.IsAny<string>(), "99887766", It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        mockDiscord.Verify(
+            d => d.SendTicketFoundAlertAsync(
+                It.IsAny<string>(),
+                "Universal",
+                "https://example.com/concert",
+                "prefs@example.com",
+                customWebhook,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task DispatchTicketFoundAsync_ShouldSkipTelegramAndDiscord_WhenToggledOff()
+    {
+        var mockSignalR = new Mock<ISignalRNotifier>();
+        var mockEmail = new Mock<IEmailService>();
+        var mockTelegram = new Mock<ITelegramService>();
+        var mockDiscord = new Mock<IDiscordService>();
+        var mockMetrics = new Mock<IScraperMetrics>();
+        var mockLogger = new Mock<ILogger<NotificationDispatcher>>();
+
+        var dispatcher = new NotificationDispatcher(
+            mockSignalR.Object,
+            mockEmail.Object,
+            mockTelegram.Object,
+            mockDiscord.Object,
+            mockMetrics.Object,
+            mockLogger.Object
+        );
+
+        var notification = new TicketFoundNotification(
+            RequestId: Guid.NewGuid(),
+            UserId: "user-muted",
+            UserEmail: "muted@example.com",
+            ProviderName: "Universal",
+            RouteOrEventId: "https://example.com/muted",
+            EventName: "Sessiz Bildirim",
+            Language: "en",
+            NotifyEmail: true,
+            NotifyTelegram: false,
+            NotifyDiscord: false,
+            TelegramChatId: "99887766",
+            DiscordWebhookUrl: "https://discord.com/api/webhooks/123456789/custom-token"
+        );
+
+        await dispatcher.DispatchTicketFoundAsync(notification);
+
+        mockSignalR.Verify(s => s.SendSeatFoundAsync("user-muted", notification.RequestId, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        mockEmail.Verify(e => e.SendTicketFoundEmailAsync("muted@example.com", "https://example.com/muted", "https://example.com/muted", "en"), Times.Once);
+        mockTelegram.Verify(t => t.SendMessageAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        mockTelegram.Verify(t => t.SendMessageAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+        mockDiscord.Verify(d => d.SendTicketFoundAlertAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        mockDiscord.Verify(d => d.SendTicketFoundAlertAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 }

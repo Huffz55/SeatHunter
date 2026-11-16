@@ -15,41 +15,30 @@ public class SystemDashboardRepository : ISystemDashboardRepository
 
     public async Task<HuntsSummaryRaw> GetHuntsSummaryAsync(CancellationToken cancellationToken = default)
     {
-        var hunts = await _context.HuntRequests
+        var statusCounts = await _context.HuntRequests
             .AsNoTracking()
-            .Select(h => new { h.Status, h.UserId })
+            .GroupBy(h => h.Status)
+            .Select(g => new { Status = g.Key, Count = g.Count() })
             .ToListAsync(cancellationToken);
 
-        int total = hunts.Count;
-        int active = hunts.Count(h => h.Status == RequestStatus.Active);
-        int completed = hunts.Count(h => h.Status == RequestStatus.Completed);
-        int expired = hunts.Count(h => h.Status == RequestStatus.Expired);
-        int cancelled = hunts.Count(h => h.Status == RequestStatus.Cancelled);
+        int CountFor(RequestStatus status) => statusCounts.FirstOrDefault(x => x.Status == status)?.Count ?? 0;
 
-        // Aktif avların kullanıcı planlarına göre dağılımı
-        var activeUserIds = hunts.Where(h => h.Status == RequestStatus.Active).Select(h => h.UserId).Distinct().ToList();
-        var userTiers = await _context.Users
-            .AsNoTracking()
-            .Where(u => activeUserIds.Contains(u.Id))
-            .ToDictionaryAsync(u => u.Id, u => u.Tier, cancellationToken);
+        int active = CountFor(RequestStatus.Active);
+        int completed = CountFor(RequestStatus.Completed);
+        int expired = CountFor(RequestStatus.Expired);
+        int cancelled = CountFor(RequestStatus.Cancelled);
+        int total = statusCounts.Sum(x => x.Count);
 
-        int freeActive = 0, proActive = 0, vipActive = 0;
-        foreach (var h in hunts.Where(h => h.Status == RequestStatus.Active))
-        {
-            if (userTiers.TryGetValue(h.UserId, out var tier))
-            {
-                switch (tier)
-                {
-                    case UserTier.Vip: vipActive++; break;
-                    case UserTier.Pro: proActive++; break;
-                    default: freeActive++; break;
-                }
-            }
-            else
-            {
-                freeActive++;
-            }
-        }
+        var activeTierCounts = await (
+            from h in _context.HuntRequests.AsNoTracking()
+            where h.Status == RequestStatus.Active
+            join u in _context.Users.AsNoTracking() on h.UserId equals u.Id into gj
+            from user in gj.DefaultIfEmpty()
+            group h by (user != null ? user.Tier : UserTier.Free) into g
+            select new { Tier = g.Key, Count = g.Count() }
+        ).ToListAsync(cancellationToken);
+
+        int ActiveFor(UserTier tier) => activeTierCounts.FirstOrDefault(x => x.Tier == tier)?.Count ?? 0;
 
         return new HuntsSummaryRaw(
             TotalHunts: total,
@@ -57,29 +46,27 @@ public class SystemDashboardRepository : ISystemDashboardRepository
             CompletedHunts: completed,
             ExpiredHunts: expired,
             CancelledHunts: cancelled,
-            ActiveFreeHunts: freeActive,
-            ActiveProHunts: proActive,
-            ActiveVipHunts: vipActive
+            ActiveFreeHunts: ActiveFor(UserTier.Free),
+            ActiveProHunts: ActiveFor(UserTier.Pro),
+            ActiveVipHunts: ActiveFor(UserTier.Vip)
         );
     }
 
     public async Task<UsersSummaryRaw> GetUsersSummaryAsync(CancellationToken cancellationToken = default)
     {
-        var users = await _context.Users
+        var tierCounts = await _context.Users
             .AsNoTracking()
-            .Select(u => u.Tier)
+            .GroupBy(u => u.Tier)
+            .Select(g => new { Tier = g.Key, Count = g.Count() })
             .ToListAsync(cancellationToken);
 
-        int total = users.Count;
-        int free = users.Count(tier => tier == UserTier.Free);
-        int pro = users.Count(tier => tier == UserTier.Pro);
-        int vip = users.Count(tier => tier == UserTier.Vip);
+        int CountFor(UserTier tier) => tierCounts.FirstOrDefault(x => x.Tier == tier)?.Count ?? 0;
 
         return new UsersSummaryRaw(
-            TotalUsers: total,
-            FreeUsers: free,
-            ProUsers: pro,
-            VipUsers: vip
+            TotalUsers: tierCounts.Sum(x => x.Count),
+            FreeUsers: CountFor(UserTier.Free),
+            ProUsers: CountFor(UserTier.Pro),
+            VipUsers: CountFor(UserTier.Vip)
         );
     }
 

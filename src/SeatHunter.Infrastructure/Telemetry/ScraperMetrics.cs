@@ -22,6 +22,18 @@ public class ScraperMetrics : IScraperMetrics
         "seathunter_notifications_total",
         description: "Kullanıcılara başarıyla gönderilen bildirimlerin kanal bazında sayısı");
 
+    private readonly Counter<long> _checkoutCounter = Meter.CreateCounter<long>(
+        "seathunter_billing_checkouts_total",
+        description: "Başlatılan abonelik ödeme oturumu sayısı");
+
+    private readonly Counter<long> _webhookCounter = Meter.CreateCounter<long>(
+        "seathunter_billing_webhooks_total",
+        description: "İşlenen ödeme webhook olayları");
+
+    private readonly Counter<long> _expiredSubscriptionsCounter = Meter.CreateCounter<long>(
+        "seathunter_subscriptions_expired_total",
+        description: "Süresi dolduğu için Free plana düşürülen abonelik sayısı");
+
     public void RecordScrapeAttempt(string provider, string status, double durationMs)
     {
         var tags = new TagList
@@ -37,5 +49,31 @@ public class ScraperMetrics : IScraperMetrics
     public void RecordNotificationDispatched(string channel)
     {
         _notificationCounter.Add(1, new KeyValuePair<string, object?>("channel", channel));
+    }
+
+    public void RecordCheckoutStarted(string tier, string cycle)
+    {
+        _checkoutCounter.Add(1, new TagList
+        {
+            { "tier", tier },
+            { "cycle", cycle }
+        });
+    }
+
+    public void RecordWebhookProcessed(string eventType, string status)
+    {
+        _webhookCounter.Add(1, new TagList
+        {
+            { "event_type", eventType },
+            { "status", status }
+        });
+    }
+
+    public void RecordSubscriptionsExpired(int count)
+    {
+        if (count > 0)
+        {
+            _expiredSubscriptionsCounter.Add(count);
+        }
     }
 }

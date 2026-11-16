@@ -48,4 +48,13 @@ public class MockProvider : ITicketProvider
     {
         return Task.FromResult<decimal?>(750m);
     }
+
+    public async Task<TicketInspectionResult> InspectAvailabilityAsync(
+        string url,
+        string? preferredCategory = null,
+        CancellationToken cancellationToken = default)
+    {
+        var isAvailable = await CheckAvailabilityAsync(url, cancellationToken);
+        return new TicketInspectionResult(isAvailable, isAvailable ? 750m : null, CategoryMatched: true);
+    }
 }

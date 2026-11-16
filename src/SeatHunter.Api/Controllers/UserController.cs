@@ -34,11 +34,60 @@ public class UserController : ControllerBase
             user.Email,
             user.FirstName,
             user.LastName,
-            Tier = user.Tier.ToString(),
+            Tier = user.GetEffectiveTier().ToString(),
+            user.SubscriptionExpiresAtUtc,
             Role = user.Role,
             IsAdmin = user.Role == "Admin",
             user.IsActive,
-            user.CreatedAt
+            user.CreatedAt,
+            user.NotifyEmail,
+            user.NotifyTelegram,
+            user.NotifyDiscord,
+            user.TelegramChatId,
+            user.DiscordWebhookUrl
+        });
+    }
+
+    [HttpPut("notifications")]
+    public async Task<IActionResult> UpdateNotificationPreferences(
+        [FromBody] UpdateNotificationPreferencesRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userId)) return Unauthorized();
+
+        var chatId = request.TelegramChatId?.Trim();
+        var webhookUrl = request.DiscordWebhookUrl?.Trim();
+
+        if (!SeatHunter.Application.Common.NotificationChannelValidator.IsValidTelegramChatId(chatId))
+        {
+            return BadRequest(new { message = "Geçersiz Telegram Chat ID formatı. Sayısal ID veya @kullaniciAdi girin." });
+        }
+
+        if (!SeatHunter.Application.Common.NotificationChannelValidator.IsValidDiscordWebhookUrl(webhookUrl))
+        {
+            return BadRequest(new { message = "Geçersiz Discord Webhook URL. Yalnızca https://discord.com/api/webhooks/... adresleri desteklenir." });
+        }
+
+        var user = await _userRepository.GetByIdAsync(userId, cancellationToken);
+        if (user == null || !user.IsActive) return Unauthorized();
+
+        user.NotifyEmail = request.NotifyEmail;
+        user.NotifyTelegram = request.NotifyTelegram;
+        user.NotifyDiscord = request.NotifyDiscord;
+        user.TelegramChatId = string.IsNullOrWhiteSpace(chatId) ? null : chatId;
+        user.DiscordWebhookUrl = string.IsNullOrWhiteSpace(webhookUrl) ? null : webhookUrl;
+
+        await _userRepository.UpdateAsync(user, cancellationToken);
+
+        return Ok(new
+        {
+            message = "Bildirim kanalı tercihleriniz güncellendi.",
+            user.NotifyEmail,
+            user.NotifyTelegram,
+            user.NotifyDiscord,
+            user.TelegramChatId,
+            user.DiscordWebhookUrl
         });
     }
 
@@ -75,7 +124,8 @@ public class UserController : ControllerBase
             user.Email,
             user.FirstName,
             user.LastName,
-            Tier = user.Tier.ToString(),
+            Tier = user.GetEffectiveTier().ToString(),
+            user.SubscriptionExpiresAtUtc,
             Role = user.Role,
             IsAdmin = user.Role == "Admin"
         });
@@ -118,4 +168,13 @@ public class ChangePasswordRequest
 {
     public string OldPassword { get; set; } = string.Empty;
     public string NewPassword { get; set; } = string.Empty;
+}
+
+public class UpdateNotificationPreferencesRequest
+{
+    public bool NotifyEmail { get; set; } = true;
+    public bool NotifyTelegram { get; set; } = true;
+    public bool NotifyDiscord { get; set; } = true;
+    public string? TelegramChatId { get; set; }
+    public string? DiscordWebhookUrl { get; set; }
 }

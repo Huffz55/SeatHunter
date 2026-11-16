@@ -1,5 +1,9 @@
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Threading.RateLimiting;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using Serilog;
 using SeatHunter.Application;
 using SeatHunter.Infrastructure;
@@ -9,8 +13,9 @@ using SeatHunter.Domain.Constants;
 
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
-    .WriteTo.Console()
-    .WriteTo.File("Logs/seathunter-log-.txt", rollingInterval: RollingInterval.Day)
+    .Enrich.FromLogContext()
+    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{CorrelationId}] {Message:lj}{NewLine}{Exception}")
+    .WriteTo.File("Logs/seathunter-log-.txt", rollingInterval: RollingInterval.Day, outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{CorrelationId}] {Message:lj}{NewLine}{Exception}")
     .CreateLogger();
 
 try
@@ -28,8 +33,15 @@ try
     builder.Services.AddSwaggerGen();
 
     var jwtSettings = builder.Configuration.GetSection("Jwt");
-    var jwtKey = !string.IsNullOrWhiteSpace(jwtSettings["Key"]) 
-        ? jwtSettings["Key"]! 
+    var configuredJwtKey = jwtSettings["Key"];
+    if (!builder.Environment.IsDevelopment() &&
+        (string.IsNullOrWhiteSpace(configuredJwtKey) || System.Text.Encoding.UTF8.GetByteCount(configuredJwtKey) < 32))
+    {
+        throw new InvalidOperationException("Production ortamında en az 32 byte uzunluğunda Jwt:Key yapılandırılmalıdır.");
+    }
+
+    var jwtKey = !string.IsNullOrWhiteSpace(configuredJwtKey)
+        ? configuredJwtKey
         : "SeatHunterSuperSecretDevelopmentKeyMustBeAtLeast32BytesLong!";
 
     builder.Services.AddAuthentication(Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerDefaults.AuthenticationScheme)
@@ -58,6 +70,22 @@ try
                         context.Token = accessToken;
                     }
                     return Task.CompletedTask;
+                },
+                OnTokenValidated = async context =>
+                {
+                    var userId = context.Principal?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                    if (string.IsNullOrWhiteSpace(userId))
+                    {
+                        context.Fail("Geçersiz kullanıcı kimliği.");
+                        return;
+                    }
+
+                    var userRepo = context.HttpContext.RequestServices.GetRequiredService<SeatHunter.Application.Interfaces.IUserRepository>();
+                    var user = await userRepo.GetByIdAsync(userId, context.HttpContext.RequestAborted);
+                    if (user == null || !user.IsActive)
+                    {
+                        context.Fail("Hesap askıya alınmış veya bulunamadı.");
+                    }
                 }
             };
         });
@@ -89,12 +117,45 @@ try
     builder.Services.AddScoped<SeatHunter.Application.Interfaces.ISignalRNotifier, SeatHunter.Api.Services.SignalRNotifier>();
     builder.Services.AddScoped<SeatHunter.Application.Interfaces.IAdminNotifier, SeatHunter.Api.Services.AdminNotifier>();
 
+    var otlpEndpoint = builder.Configuration["OpenTelemetry:OtlpEndpoint"]
+        ?? Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
+
+    builder.Services.AddOpenTelemetry()
+        .ConfigureResource(resource => resource.AddService("SeatHunter.Api"))
+        .WithMetrics(metrics =>
+        {
+            metrics
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation()
+                .AddMeter(AppConstants.Metrics.MeterName)
+                .AddPrometheusExporter();
+        })
+        .WithTracing(tracing =>
+        {
+            tracing
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation()
+                .AddSource(AppConstants.Metrics.MeterName);
+
+            if (!string.IsNullOrWhiteSpace(otlpEndpoint) && Uri.TryCreate(otlpEndpoint, UriKind.Absolute, out var otlpUri))
+            {
+                tracing.AddOtlpExporter(o => o.Endpoint = otlpUri);
+            }
+        });
+
+    builder.Services.Configure<ForwardedHeadersOptions>(options =>
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+        options.KnownIPNetworks.Clear();
+        options.KnownProxies.Clear();
+    });
+
     builder.Services.AddRateLimiter(options =>
     {
         options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
         options.AddFixedWindowLimiter(AppConstants.RateLimiting.FixedPolicy, opt =>
         {
-            opt.PermitLimit = 20;
+            opt.PermitLimit = builder.Environment.IsEnvironment("Testing") ? 1000 : 20;
             opt.Window = TimeSpan.FromSeconds(10);
             opt.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
             opt.QueueLimit = 0;
@@ -108,23 +169,34 @@ try
     if (string.IsNullOrWhiteSpace(rabbitHost)) rabbitHost = "localhost";
     var rabbitConn = rabbitHost.StartsWith("amqp://") ? rabbitHost : $"amqp://{rabbitHost}:5672";
 
-    builder.Services.AddHealthChecks()
-        .AddNpgSql(builder.Configuration.GetConnectionString("DefaultConnection")!, name: "PostgreSQL-Database")
-        .AddRedis(redisConn, name: "Redis-Cache")
-        .AddRabbitMQ(rabbitConnectionString: rabbitConn, name: "RabbitMQ-MessageBroker")
-        .AddCheck<SeatHunter.Infrastructure.HealthChecks.ProxyPoolHealthCheck>("Proxy-Pool");
+    if (!builder.Environment.IsEnvironment("Testing"))
+    {
+        builder.Services.AddHealthChecks()
+            .AddNpgSql(builder.Configuration.GetConnectionString("DefaultConnection")!, name: "PostgreSQL-Database")
+            .AddRedis(redisConn, name: "Redis-Cache")
+            .AddRabbitMQ(rabbitConnectionString: rabbitConn, name: "RabbitMQ-MessageBroker")
+            .AddCheck<SeatHunter.Infrastructure.HealthChecks.ProxyPoolHealthCheck>("Proxy-Pool");
 
-    builder.Services.AddHostedService<RabbitMqListenerService>();
-    builder.Services.AddHostedService<ContinuousHuntWorker>();
+        builder.Services.AddHostedService<RabbitMqListenerService>();
+        builder.Services.AddHostedService<ContinuousHuntWorker>();
+        builder.Services.AddHostedService<SubscriptionExpirationWorker>();
+    }
+    else
+    {
+        builder.Services.AddHealthChecks();
+    }
 
     var app = builder.Build();
 
-    using (var scope = app.Services.CreateScope())
+    if (!app.Environment.IsEnvironment("Testing"))
     {
+        using var scope = app.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<SeatHunter.Infrastructure.Persistence.SeatHunterDbContext>();
         db.Database.Migrate();
     }
     
+    app.UseForwardedHeaders();
+    app.UseMiddleware<SeatHunter.Api.Middlewares.CorrelationIdMiddleware>();
     app.Use(async (context, next) =>
     {
         context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
@@ -142,12 +214,21 @@ try
         app.UseSwagger(); 
         app.UseSwaggerUI(); 
     }
-    app.UseHttpsRedirection();
+    if (app.Configuration.GetValue<bool>("Http:EnableHttpsRedirection"))
+    {
+        app.UseHttpsRedirection();
+    }
     app.UseCors("CorsPolicy");
     app.UseAuthentication();
     app.UseAuthorization();
     app.UseRateLimiter();
     app.MapControllers();
+
+    app.MapHealthChecks("/health/live", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+    {
+        Predicate = _ => false
+    });
+    app.MapPrometheusScrapingEndpoint();
 
     app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
     {
@@ -175,3 +256,5 @@ finally
 {
     Log.CloseAndFlush();
 }
+
+public partial class Program { }

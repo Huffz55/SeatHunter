@@ -65,6 +65,8 @@ public class CreateHuntRequestCommandHandler : IRequestHandler<CreateHuntRequest
             TargetDate = (request.TargetDate == default || request.TargetDate <= DateTime.UtcNow)
                 ? DateTime.UtcNow.AddDays(30) 
                 : (request.TargetDate.Kind == DateTimeKind.Utc ? request.TargetDate : request.TargetDate.ToUniversalTime()),
+            // İlk anlık kontrol RabbitMQ kuyruğuna devredildiği için worker ile yarışmaması adına ilk zamanlamayı 20sn sonraya kur
+            NextScanTime = DateTime.UtcNow.AddSeconds(20),
             Language = request.Language ?? "tr",
             EventName = eventName,
             MaxPrice = request.MaxPrice,
@@ -124,16 +126,62 @@ public class CreateHuntRequestCommandHandler : IRequestHandler<CreateHuntRequest
             throw new ArgumentException("Dahili ağ adresleri ve yerel bağlantılar taranamaz.");
         }
 
-        // Özel IP blokları kontrolü (RFC 1918 ve Link-local)
-        if (System.Net.IPAddress.TryParse(host, out var ip))
+        // Özel IP blokları kontrolü (IP literal ve IPv6 dahil)
+        if (System.Net.IPAddress.TryParse(host, out var literalIp))
         {
-            var b = ip.GetAddressBytes();
-            bool isPriv172 = b.Length == 4 && b[0] == 172 && b[1] >= 16 && b[1] <= 31;
-            if (System.Net.IPAddress.IsLoopback(ip) || isPriv172 || ip.ToString().StartsWith("10.") ||
-                ip.ToString().StartsWith("192.168.") || ip.ToString().StartsWith("169.254."))
+            if (IsPrivateOrReservedIp(literalIp))
             {
                 throw new ArgumentException("Özel IP adresleri taranamaz.");
             }
+            return;
         }
+
+        // DNS üzerinden yerel/özel IP'ye çözümlenen alan adlarını engelle (SSRF koruması)
+        try
+        {
+            var addresses = System.Net.Dns.GetHostAddresses(host);
+            if (addresses.Any(IsPrivateOrReservedIp))
+            {
+                throw new ArgumentException("Dahili ağ adreslerine çözümlenen alan adları taranamaz.");
+            }
+        }
+        catch (System.Net.Sockets.SocketException)
+        {
+            // Çevrimdışı veya test ortamında çözümlenemeyen dış alan adı için HTTP katmanının başarısız olmasına izin ver
+        }
+    }
+
+    private static bool IsPrivateOrReservedIp(System.Net.IPAddress ip)
+    {
+        if (ip.IsIPv4MappedToIPv6)
+        {
+            ip = ip.MapToIPv4();
+        }
+
+        if (System.Net.IPAddress.IsLoopback(ip) || ip.Equals(System.Net.IPAddress.Any) || ip.Equals(System.Net.IPAddress.IPv6Any))
+        {
+            return true;
+        }
+
+        var bytes = ip.GetAddressBytes();
+        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && bytes.Length == 4)
+        {
+            return bytes[0] == 0 ||                                      // 0.0.0.0/8
+                   bytes[0] == 10 ||                                     // 10.0.0.0/8
+                   bytes[0] == 127 ||                                    // 127.0.0.0/8
+                   (bytes[0] == 100 && bytes[1] >= 64 && bytes[1] <= 127) || // 100.64.0.0/10 CGNAT
+                   (bytes[0] == 169 && bytes[1] == 254) ||               // 169.254.0.0/16 Link-local / Metadata
+                   (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) || // 172.16.0.0/12
+                   (bytes[0] == 192 && bytes[1] == 168);                 // 192.168.0.0/16
+        }
+
+        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && bytes.Length == 16)
+        {
+            bool isUniqueLocal = (bytes[0] & 0xFE) == 0xFC;              // fc00::/7
+            bool isLinkLocal = bytes[0] == 0xFE && (bytes[1] & 0xC0) == 0x80; // fe80::/10
+            return isUniqueLocal || isLinkLocal || ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal;
+        }
+
+        return false;
     }
 }

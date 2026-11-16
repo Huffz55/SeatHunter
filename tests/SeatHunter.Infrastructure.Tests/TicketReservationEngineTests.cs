@@ -1,8 +1,10 @@
 using FluentAssertions;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Moq;
 using SeatHunter.Application.Interfaces;
 using SeatHunter.Domain.Entities;
+using SeatHunter.Infrastructure.Providers;
 using SeatHunter.Infrastructure.Reservation;
 using SeatHunter.Infrastructure.Services;
 using Xunit;
@@ -106,5 +108,64 @@ public class TicketReservationEngineTests
             "vip@example.com",
             It.IsAny<CancellationToken>()
         ), Times.Once);
+    }
+
+    [Fact]
+    public async Task PlaywrightTicketReservationEngine_WhenBrowserFailsAndMockFallbackDisabled_ShouldReturnFailure()
+    {
+        var mockBrowser = new Mock<IPlaywrightBrowserManager>();
+        mockBrowser.Setup(b => b.CreateContextAsync()).ThrowsAsync(new InvalidOperationException("Browser unavailable"));
+
+        var mockCaptcha = new Mock<ICaptchaSolver>();
+        var mockEngine = new MockTicketReservationEngine(_mockLogger.Object);
+        var playwrightLogger = new Mock<ILogger<PlaywrightTicketReservationEngine>>();
+        var config = new ConfigurationBuilder().Build();
+
+        var engine = new PlaywrightTicketReservationEngine(
+            mockBrowser.Object,
+            mockCaptcha.Object,
+            mockEngine,
+            playwrightLogger.Object,
+            config);
+
+        var result = await engine.AttemptReserveAsync(new HuntRequest
+        {
+            Id = Guid.NewGuid(),
+            RouteOrEventId = "https://biletix.com/etkinlik/123"
+        });
+
+        result.IsSuccess.Should().BeFalse();
+        result.CartUrl.Should().BeNull();
+        result.FailureReason.Should().Contain("Browser unavailable");
+    }
+
+    [Fact]
+    public async Task PlaywrightTicketReservationEngine_WhenAllowMockFallbackEnabled_ShouldReturnMockReservation()
+    {
+        var mockBrowser = new Mock<IPlaywrightBrowserManager>();
+        mockBrowser.Setup(b => b.CreateContextAsync()).ThrowsAsync(new InvalidOperationException("Browser unavailable"));
+
+        var mockCaptcha = new Mock<ICaptchaSolver>();
+        var mockEngine = new MockTicketReservationEngine(_mockLogger.Object);
+        var playwrightLogger = new Mock<ILogger<PlaywrightTicketReservationEngine>>();
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Reservation:AllowMockFallback"] = "true" })
+            .Build();
+
+        var engine = new PlaywrightTicketReservationEngine(
+            mockBrowser.Object,
+            mockCaptcha.Object,
+            mockEngine,
+            playwrightLogger.Object,
+            config);
+
+        var result = await engine.AttemptReserveAsync(new HuntRequest
+        {
+            Id = Guid.NewGuid(),
+            RouteOrEventId = "https://biletix.com/etkinlik/123"
+        });
+
+        result.IsSuccess.Should().BeTrue();
+        result.CartUrl.Should().Contain("vip_cart=");
     }
 }

@@ -14,7 +14,12 @@ public record TicketFoundNotification(
     decimal? ObservedPrice = null,
     bool IsPriceDrop = false,
     decimal? PriceDropPercentage = null,
-    decimal? LowestHistoricalPrice = null
+    decimal? LowestHistoricalPrice = null,
+    bool NotifyEmail = true,
+    bool NotifyTelegram = true,
+    bool NotifyDiscord = true,
+    string? TelegramChatId = null,
+    string? DiscordWebhookUrl = null
 );
 
 public interface INotificationDispatcher

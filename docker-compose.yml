@@ -78,11 +78,15 @@ services:
       - Email__SmtpPort=${EMAIL_SMTP_PORT:-587}
       - Discord__WebhookUrl=${DISCORD_WEBHOOK_URL}
       - SCRAPER_PROXIES=${SCRAPER_PROXIES}
+      - Billing__WebhookSecret=${BILLING_WEBHOOK_SECRET}
+      - Cors__AllowedOrigins__0=${CORS_ALLOWED_ORIGIN:-http://localhost:5179}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - Http__EnableHttpsRedirection=${ENABLE_HTTPS_REDIRECTION:-false}
     networks:
       - seathunter_network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health/live || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3

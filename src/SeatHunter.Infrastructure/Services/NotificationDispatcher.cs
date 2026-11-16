@@ -122,7 +122,7 @@ public class NotificationDispatcher : INotificationDispatcher
 
     private async Task SendEmailAsync(TicketFoundNotification notification, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(notification.UserEmail)) return;
+        if (!notification.NotifyEmail || string.IsNullOrWhiteSpace(notification.UserEmail)) return;
 
         try
         {
@@ -146,6 +146,8 @@ public class NotificationDispatcher : INotificationDispatcher
 
     private async Task SendTelegramAsync(TicketFoundNotification notification, string eventTitle, CancellationToken cancellationToken)
     {
+        if (!notification.NotifyTelegram) return;
+
         try
         {
             string telegramMessage;
@@ -163,7 +165,14 @@ public class NotificationDispatcher : INotificationDispatcher
                 telegramMessage = $"🚀 Sistem Raporu: {notification.UserEmail ?? notification.UserId} kullanıcısı için {notification.ProviderName} üzerinde {eventTitle} bileti başarıyla bulundu!{priceText} 🔗 {notification.RouteOrEventId}";
             }
 
-            await _telegramService.SendMessageAsync(telegramMessage, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(notification.TelegramChatId))
+            {
+                await _telegramService.SendMessageAsync(telegramMessage, notification.TelegramChatId, cancellationToken);
+            }
+            else
+            {
+                await _telegramService.SendMessageAsync(telegramMessage, cancellationToken);
+            }
             _metrics.RecordNotificationDispatched("telegram");
         }
         catch (Exception ex)
@@ -174,6 +183,8 @@ public class NotificationDispatcher : INotificationDispatcher
 
     private async Task SendDiscordAsync(TicketFoundNotification notification, string eventTitle, CancellationToken cancellationToken)
     {
+        if (!notification.NotifyDiscord) return;
+
         try
         {
             var actionUrl = notification.IsAutoReserved && !string.IsNullOrEmpty(notification.ReservationCartUrl)
@@ -196,13 +207,27 @@ public class NotificationDispatcher : INotificationDispatcher
                     : eventTitle;
             }
 
-            await _discordService.SendTicketFoundAlertAsync(
-                titleWithVip, 
-                notification.ProviderName, 
-                actionUrl, 
-                notification.UserEmail, 
-                cancellationToken
-            );
+            if (!string.IsNullOrWhiteSpace(notification.DiscordWebhookUrl))
+            {
+                await _discordService.SendTicketFoundAlertAsync(
+                    titleWithVip,
+                    notification.ProviderName,
+                    actionUrl,
+                    notification.UserEmail,
+                    notification.DiscordWebhookUrl,
+                    cancellationToken
+                );
+            }
+            else
+            {
+                await _discordService.SendTicketFoundAlertAsync(
+                    titleWithVip, 
+                    notification.ProviderName, 
+                    actionUrl, 
+                    notification.UserEmail, 
+                    cancellationToken
+                );
+            }
             _metrics.RecordNotificationDispatched("discord");
         }
         catch (Exception ex)
