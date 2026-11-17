@@ -78,7 +78,10 @@ services:
       - Email__SmtpPort=${EMAIL_SMTP_PORT:-587}
       - Discord__WebhookUrl=${DISCORD_WEBHOOK_URL}
       - SCRAPER_PROXIES=${SCRAPER_PROXIES}
+      - Billing__Provider=${BILLING_PROVIDER:-Simulated}
       - Billing__WebhookSecret=${BILLING_WEBHOOK_SECRET}
+      - Billing__Stripe__SecretKey=${STRIPE_SECRET_KEY:-}
+      - Billing__Stripe__WebhookSecret=${STRIPE_WEBHOOK_SECRET:-}
       - Cors__AllowedOrigins__0=${CORS_ALLOWED_ORIGIN:-http://localhost:5179}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       - Http__EnableHttpsRedirection=${ENABLE_HTTPS_REDIRECTION:-false}

@@ -178,7 +178,7 @@ public class BillingController : ControllerBase
         BillingWebhookEvent? webhookEvent;
         try
         {
-            webhookEvent = JsonSerializer.Deserialize<BillingWebhookEvent>(rawPayload, WebhookJsonOptions);
+            webhookEvent = ParseWebhookPayload(rawPayload);
         }
         catch (JsonException)
         {
@@ -190,7 +190,8 @@ public class BillingController : ControllerBase
             return BadRequest(new { message = "ExternalSessionId alanı zorunludur." });
         }
 
-        var signature = Request.Headers["X-Billing-Signature"].FirstOrDefault();
+        var signature = Request.Headers["X-Billing-Signature"].FirstOrDefault()
+            ?? Request.Headers["Stripe-Signature"].FirstOrDefault();
 
         try
         {
@@ -205,6 +206,39 @@ public class BillingController : ControllerBase
 
     private IActionResult ForbidOrUnauthorized(string message) =>
         StatusCode(StatusCodes.Status403Forbidden, new { message });
+
+    private static BillingWebhookEvent? ParseWebhookPayload(string rawPayload)
+    {
+        var direct = JsonSerializer.Deserialize<BillingWebhookEvent>(rawPayload, WebhookJsonOptions);
+        if (direct != null && !string.IsNullOrWhiteSpace(direct.ExternalSessionId))
+        {
+            return direct;
+        }
+
+        using var doc = JsonDocument.Parse(rawPayload);
+        var root = doc.RootElement;
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty("type", out var typeProp) ||
+            !root.TryGetProperty("data", out var dataProp) ||
+            !dataProp.TryGetProperty("object", out var objProp) ||
+            !objProp.TryGetProperty("id", out var idProp))
+        {
+            return direct;
+        }
+
+        var stripeType = typeProp.GetString();
+        var mappedEvent = stripeType switch
+        {
+            "checkout.session.completed" => "payment.succeeded",
+            "checkout.session.async_payment_succeeded" => "payment.succeeded",
+            "checkout.session.expired" => "payment.failed",
+            "checkout.session.async_payment_failed" => "payment.failed",
+            _ => stripeType ?? "unknown"
+        };
+
+        var externalSubId = objProp.TryGetProperty("subscription", out var subProp) ? subProp.GetString() : null;
+        return new BillingWebhookEvent(mappedEvent, idProp.GetString() ?? string.Empty, externalSubId);
+    }
 }
 
 public class StartCheckoutRequest

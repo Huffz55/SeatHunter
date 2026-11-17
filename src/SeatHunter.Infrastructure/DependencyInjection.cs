@@ -33,7 +33,14 @@ public static class DependencyInjection
         services.AddScoped<ITicketPriceHistoryService, SeatHunter.Infrastructure.Services.TicketPriceHistoryService>();
         services.AddScoped<ISystemDashboardRepository, SystemDashboardRepository>();
         services.AddScoped<IDeadLetterReplayService, RabbitMqDeadLetterReplayService>();
-        services.AddSingleton<IPaymentGateway, SeatHunter.Infrastructure.Services.SimulatedPaymentGateway>();
+        if (string.Equals(configuration["Billing:Provider"], "Stripe", StringComparison.OrdinalIgnoreCase))
+        {
+            services.AddHttpClient<IPaymentGateway, SeatHunter.Infrastructure.Services.StripePaymentGateway>();
+        }
+        else
+        {
+            services.AddSingleton<IPaymentGateway, SeatHunter.Infrastructure.Services.SimulatedPaymentGateway>();
+        }
         var userAgents = new[] 
         {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", // Windows Chrome
